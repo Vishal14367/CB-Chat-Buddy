@@ -5,7 +5,7 @@ class Lecture(BaseModel):
     lecture_id: str
     lecture_title: str
     thumbnail_url: Optional[str] = None
-    duration: Optional[int] = None
+    duration: Optional[float] = None
     lecture_order: Optional[int] = None
 
 class LectureDetail(Lecture):

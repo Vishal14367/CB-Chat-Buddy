@@ -88,13 +88,19 @@ def fetch_course_rows_from_csv(csv_path: str, course_title: str) -> list:
 
 
 def derive_lecture_order(rows: list) -> list:
-    """Add sequential lecture_order based on chapter grouping.
+    """Add sequential lecture_order based on best available ordering.
 
-    If rows already have chapter_order and lecture_order columns,
-    uses those. Otherwise derives from the id sequence.
+    Priority:
+    1. Explicit chapter_order + lecture_order columns (if both exist)
+    2. module_id column (platform's sequential ordering)
+    3. id column (database insertion order — last resort)
     """
-    # Check for explicit ordering
-    sample = rows[0] if rows else {}
+    if not rows:
+        return rows
+
+    sample = rows[0]
+
+    # Priority 1: Explicit chapter_order + lecture_order columns
     has_chapter_order = 'chapter_order' in sample and sample['chapter_order'] is not None
     has_lecture_order = (
         ('lecture_order' in sample and sample['lecture_order'] is not None) or
@@ -102,7 +108,6 @@ def derive_lecture_order(rows: list) -> list:
     )
 
     if has_chapter_order and has_lecture_order:
-        # Use explicit ordering
         lec_order_key = 'lecture_order' if 'lecture_order' in sample else 'lecture_order_in_chapter'
         sorted_rows = sorted(rows, key=lambda r: (
             r.get('chapter_order', 0),
@@ -110,9 +115,20 @@ def derive_lecture_order(rows: list) -> list:
         ))
         for seq, row in enumerate(sorted_rows, start=1):
             row['_lecture_order'] = seq
+        print("  Ordering: using explicit chapter_order + lecture_order")
         return sorted_rows
 
-    # Derive from id/position — rows should already be ordered by id ASC
+    # Priority 2: module_id (platform's sequential ordering)
+    has_module_id = 'module_id' in sample and sample['module_id'] is not None
+    if has_module_id:
+        sorted_rows = sorted(rows, key=lambda r: int(r.get('module_id', 0)))
+        for seq, row in enumerate(sorted_rows, start=1):
+            row['_lecture_order'] = seq
+        print("  Ordering: using module_id")
+        return sorted_rows
+
+    # Priority 3: Derive from id/position — rows already ordered by id ASC
+    print("  Ordering: using id (fallback)")
     for seq, row in enumerate(rows, start=1):
         row['_lecture_order'] = seq
 
