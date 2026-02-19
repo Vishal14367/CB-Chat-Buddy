@@ -38,14 +38,29 @@ def get_llm_service() -> GroqLLMService:
 
 @router.get("/courses", response_model=List[Course])
 async def get_courses(data: CSVDataSource = Depends(get_csv_data)):
-    """Get list of all courses."""
-    courses = data.get_all_courses()
-    return courses
+    """Get list of all courses. Uses Qdrant in RAG mode, CSV otherwise."""
+    if rag_pipeline and rag_pipeline.vector_store:
+        return rag_pipeline.vector_store.get_all_courses()
+    return data.get_all_courses()
 
 
 @router.get("/courses/{course_id}", response_model=CourseDetail)
 async def get_course_detail(course_id: str, data: CSVDataSource = Depends(get_csv_data)):
-    """Get course with chapters and lectures."""
+    """Get course with chapters and lectures. Uses Qdrant in RAG mode."""
+    if rag_pipeline and rag_pipeline.vector_store:
+        # Qdrant stores course_title, not course_id — reverse the slug
+        all_courses = rag_pipeline.vector_store.get_all_courses()
+        course_title = None
+        for c in all_courses:
+            if c["course_id"] == course_id:
+                course_title = c["course_title"]
+                break
+        if course_title:
+            course = rag_pipeline.vector_store.get_course_detail(course_title)
+            if course:
+                return course
+        raise HTTPException(status_code=404, detail="Course not found")
+
     course = data.get_course_detail(course_id)
     if not course:
         raise HTTPException(status_code=404, detail="Course not found")
@@ -54,7 +69,12 @@ async def get_course_detail(course_id: str, data: CSVDataSource = Depends(get_cs
 
 @router.get("/lectures/{lecture_id}", response_model=LectureDetail)
 async def get_lecture_detail(lecture_id: str, data: CSVDataSource = Depends(get_csv_data)):
-    """Get lecture metadata and transcript."""
+    """Get lecture metadata and transcript. Uses Qdrant in RAG mode."""
+    if rag_pipeline and rag_pipeline.vector_store:
+        lecture = rag_pipeline.vector_store.get_lecture_detail(lecture_id)
+        if lecture:
+            return lecture
+
     lecture = data.get_lecture_detail(lecture_id)
     if not lecture:
         raise HTTPException(status_code=404, detail="Lecture not found")

@@ -241,6 +241,155 @@ class VectorStoreService:
             pass
         return None
 
+    # ---- Course catalog methods (used in RAG mode instead of CSV) ----
+
+    def get_all_courses(self) -> List[Dict[str, Any]]:
+        """Extract unique courses from Qdrant with chapter/lecture counts."""
+        courses: Dict[str, Dict[str, set]] = {}
+        offset = None
+
+        while True:
+            results, offset = self.client.scroll(
+                collection_name=self.collection_name,
+                limit=250,
+                offset=offset,
+                with_payload=["course_title", "chapter_title", "lecture_id"]
+            )
+            if not results:
+                break
+
+            for point in results:
+                ct = point.payload.get("course_title", "")
+                ch = point.payload.get("chapter_title", "")
+                lid = point.payload.get("lecture_id", "")
+                if ct not in courses:
+                    courses[ct] = {"chapters": set(), "lectures": set()}
+                if ch:
+                    courses[ct]["chapters"].add(ch)
+                if lid:
+                    courses[ct]["lectures"].add(lid)
+
+            if offset is None:
+                break
+
+        result = []
+        for course_title, data in sorted(courses.items()):
+            course_id = course_title.lower().replace(' ', '-')
+            result.append({
+                "course_id": course_id,
+                "course_title": course_title,
+                "chapter_count": len(data["chapters"]),
+                "lecture_count": len(data["lectures"]),
+            })
+        return result
+
+    def get_course_detail(self, course_title: str) -> Optional[Dict[str, Any]]:
+        """Build full course structure (chapters + lectures) from Qdrant."""
+        chapters: Dict[str, Dict[str, Dict]] = {}
+        chapter_min_order: Dict[str, int] = {}
+        offset = None
+
+        while True:
+            results, offset = self.client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=Filter(
+                    must=[
+                        FieldCondition(
+                            key="course_title",
+                            match=MatchValue(value=course_title)
+                        )
+                    ]
+                ),
+                limit=250,
+                offset=offset,
+                with_payload=[
+                    "course_title", "chapter_title", "lecture_title",
+                    "lecture_id", "lecture_order", "player_embed_url",
+                    "duration_seconds"
+                ]
+            )
+            if not results:
+                break
+
+            for point in results:
+                p = point.payload
+                ch = p.get("chapter_title", "Unknown Chapter")
+                lid = str(p.get("lecture_id", ""))
+                lorder = p.get("lecture_order", 0)
+
+                if ch not in chapters:
+                    chapters[ch] = {}
+                    chapter_min_order[ch] = lorder
+                if lorder < chapter_min_order[ch]:
+                    chapter_min_order[ch] = lorder
+
+                if lid and lid not in chapters[ch]:
+                    chapters[ch][lid] = {
+                        "lecture_id": lid,
+                        "lecture_title": p.get("lecture_title", ""),
+                        "thumbnail_url": p.get("player_embed_url", ""),
+                        "duration": p.get("duration_seconds"),
+                        "lecture_order": lorder,
+                    }
+
+            if offset is None:
+                break
+
+        if not chapters:
+            return None
+
+        course_id = course_title.lower().replace(' ', '-')
+        sorted_chapters = sorted(chapter_min_order.items(), key=lambda x: x[1])
+
+        return {
+            "course_id": course_id,
+            "course_title": course_title,
+            "chapters": [
+                {
+                    "chapter_title": ch_title,
+                    "lectures": sorted(
+                        chapters[ch_title].values(),
+                        key=lambda x: x["lecture_order"]
+                    )
+                }
+                for ch_title, _ in sorted_chapters
+            ]
+        }
+
+    def get_lecture_detail(self, lecture_id: str) -> Optional[Dict[str, Any]]:
+        """Get lecture metadata + reassembled transcript from Qdrant chunks."""
+        results, _ = self.client.scroll(
+            collection_name=self.collection_name,
+            scroll_filter=Filter(
+                must=[
+                    FieldCondition(
+                        key="lecture_id",
+                        match=MatchValue(value=lecture_id)
+                    )
+                ]
+            ),
+            limit=500,
+            with_payload=True
+        )
+
+        if not results:
+            return None
+
+        sorted_chunks = sorted(results, key=lambda r: r.payload.get("chunk_index", 0))
+        first = sorted_chunks[0].payload
+        transcript = " ".join(r.payload.get("text", "") for r in sorted_chunks)
+
+        return {
+            "lecture_id": lecture_id,
+            "lecture_title": first.get("lecture_title", ""),
+            "course_title": first.get("course_title", ""),
+            "chapter_title": first.get("chapter_title", ""),
+            "transcript": transcript,
+            "thumbnail_url": first.get("player_embed_url", ""),
+            "duration": first.get("duration_seconds"),
+            "lecture_order": first.get("lecture_order", 0),
+        }
+
     def health_check(self) -> bool:
         """Check if Qdrant is reachable and collection exists."""
         try:

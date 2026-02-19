@@ -66,6 +66,9 @@ class CSVDataSource:
         # Track per-course sequential ordering (0-based)
         course_counters = defaultdict(int)
 
+        # Track the earliest row/module_id per chapter for correct chapter ordering
+        chapter_first_key = defaultdict(lambda: defaultdict(lambda: float('inf')))
+
         for idx, row in self.df.iterrows():
             # Generate lecture ID
             lecture_id = generate_lecture_id(row)
@@ -80,6 +83,12 @@ class CSVDataSource:
             # Per-course sequential order
             per_course_order = course_counters[course_title]
             course_counters[course_title] += 1
+
+            # Track chapter ordering: prefer module_id if available, else row index
+            module_id = row.get('module_id', None)
+            order_key = int(module_id) if module_id is not None and not pd.isna(module_id) else idx
+            if order_key < chapter_first_key[course_title][chapter_title]:
+                chapter_first_key[course_title][chapter_title] = order_key
 
             # Store lecture data
             lecture_data = {
@@ -102,20 +111,27 @@ class CSVDataSource:
                 'duration': lecture_data['duration'],
                 'lecture_order': per_course_order
             })
-        
-        # Convert to final structure
+
+        # Convert to final structure with chapters sorted by module_id
         self.course_structure = {}
         for course_title, chapters in courses.items():
             course_id = course_title.lower().replace(' ', '-')
+
+            # Sort chapter titles by their earliest module_id / row index
+            sorted_ch_titles = sorted(
+                chapters.keys(),
+                key=lambda ch: chapter_first_key[course_title][ch]
+            )
+
             self.course_structure[course_id] = {
                 'course_id': course_id,
                 'course_title': course_title,
                 'chapters': [
                     {
-                        'chapter_title': chapter_title,
-                        'lectures': sorted(lectures, key=lambda x: x['lecture_order'])
+                        'chapter_title': ch_title,
+                        'lectures': sorted(chapters[ch_title], key=lambda x: x['lecture_order'])
                     }
-                    for chapter_title, lectures in chapters.items()
+                    for ch_title in sorted_ch_titles
                 ]
             }
     
