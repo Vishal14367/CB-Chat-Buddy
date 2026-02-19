@@ -1,0 +1,90 @@
+# Dependencies
+node_modules/
+.next/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+
+# IDEs and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build outputs
+dist/
+build/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Other
+nul
+sql.csv
+sql_full.csv
+*.pdf
+*.docx
+
+# Root-level images (not frontend/public)
+/*.png
+
+# Dev artifacts
+CHANGES_SUMMARY.txt
+FIX_WRONG_LECTURE_MAPPING.txt
+IMPLEMENTATION_COMPLETE.md
+NEXT_STEPS_PRODUCTION_BUILD.txt
+PHASE_*.md
+PHASE_*.txt
+PLAN.md
+PRODUCTION_COMPLETE.md
+TEST_RESULTS.md
+VERIFICATION_*.md
+Start-Backend.bat
+Start-Frontend.bat
+backend.err
+check_csv.py
+debug_env.py
+setup-phase1.ps1
+CHATBOT_IMPROVEMENTS_COMPLETE.md
+DEPLOYMENT_CHECKLIST.md
+DISCORD_LINK_FIX_V7.md
+ENHANCED_CHATBOT_V8.md
+FINAL_CLEANUP_V6.md
+FINAL_FIXES_V5.md
+FINAL_IMPROVEMENTS_V2.md
+FINAL_POLISH_V4.md
+FINAL_REFINEMENTS_V3.md
+FIXES_APPLIED.md
+IMPLEMENTATION_SUMMARY.md
+PETER_PANDEY_IMPLEMENTATION_COMPLETE.md
+PETER_PANDEY_SYSTEM_PROMPT.md
+PETER_PANDEY_UPDATE.md
+PROJECT_STRUCTURE.md
+QUICK_CHANGES_V3.md
+QUICK_FIXES_V5.md
+QUICK_REFERENCE_V4.md
+SETUP_GUIDE.md
+UPDATES.md
+WORLD_CLASS_CHATBOT_FEATURES.md
+
+# Claude
+.claude/

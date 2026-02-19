@@ -1,0 +1,118 @@
+@import "tailwindcss";
+
+:root {
+  /* Codebasics Brand — White/Blue Theme */
+  --cb-blue: #3B82F6;
+  --cb-blue-deep: #2563EB;
+  --cb-blue-light: #EFF6FF;
+  --cb-blue-50: #DBEAFE;
+  --cb-navy: #0C1228;
+  --cb-navy-light: #182848;
+  --cb-orange: #F89937;
+  --cb-orange-deep: #F36F2C;
+  --cb-orange-light: #FFF4E6;
+  --cb-bg: #FAFAFA;
+  --cb-bg-alt: #F3F6FF;
+  --cb-bg-card: #FFFFFF;
+  --cb-border: #E2E5F1;
+  --cb-text: #1A1A2E;
+  --cb-text-muted: #8A8690;
+  --cb-text-light: #6B7280;
+  --cb-white: #FFFFFF;
+  --cb-success: #10B981;
+  --cb-error: #EF4444;
+  --cb-discord: #5865F2;
+  --background: #FAFAFA;
+  --foreground: #1A1A2E;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-heading: 'Red Hat Display', 'Inter', system-ui, sans-serif;
+}
+
+body {
+  background: var(--cb-bg);
+  color: var(--cb-text);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #D1D5DB; border-radius: 100px; }
+::-webkit-scrollbar-thumb:hover { background: #9CA3AF; }
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+@keyframes slide-up {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes scale-in {
+  from { transform: scale(0.95); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+@keyframes typing-dot {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.3; }
+  30% { transform: translateY(-4px); opacity: 1; }
+}
+@keyframes voice-wave {
+  0%, 100% { height: 6px; }
+  50% { height: 18px; }
+}
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+@keyframes voice-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4); }
+  70% { box-shadow: 0 0 0 10px rgba(59, 130, 246, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+}
+/* Subtle pulse for chat FAB discoverability */
+@keyframes pulse-chat {
+  0%, 100% { box-shadow: 0 4px 14px rgba(59, 130, 246, 0.25); transform: scale(1); }
+  50% { box-shadow: 0 4px 20px rgba(59, 130, 246, 0.45); transform: scale(1.05); }
+}
+
+.animate-slide-up { animation: slide-up 0.4s ease-out; }
+.animate-fade-in { animation: fade-in 0.3s ease-out; }
+.animate-scale-in { animation: scale-in 0.3s ease-out; }
+.chat-message-enter { animation: slide-up 0.3s ease-out; }
+.animate-pulse-chat { animation: pulse-chat 2s ease-in-out infinite; }
+
+.voice-bar {
+  width: 3px;
+  background: var(--cb-blue);
+  border-radius: 100px;
+  animation: voice-wave 0.8s ease-in-out infinite;
+}
+.voice-bar:nth-child(1) { animation-delay: 0s; }
+.voice-bar:nth-child(2) { animation-delay: 0.12s; }
+.voice-bar:nth-child(3) { animation-delay: 0.24s; }
+.voice-bar:nth-child(4) { animation-delay: 0.36s; }
+.voice-bar:nth-child(5) { animation-delay: 0.18s; }
+
+.typing-dot { animation: typing-dot 1.4s ease-in-out infinite; }
+.typing-dot:nth-child(1) { animation-delay: 0s; }
+.typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+.voice-pulse { animation: voice-pulse 1.5s infinite; }
+
+.chat-prose p { margin-bottom: 0.5rem; }
+.chat-prose p:last-child { margin-bottom: 0; }
+.chat-prose ul { margin-top: 0.25rem; margin-bottom: 0.5rem; }
+.chat-prose code { font-size: 0.85em; padding: 0.15em 0.4em; border-radius: 4px; }
