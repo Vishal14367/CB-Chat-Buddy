@@ -7,6 +7,7 @@ Usage: python scripts/reingest_all.py
 
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
@@ -86,12 +87,21 @@ def main():
                 continue
 
             rows = derive_lecture_order(rows)
-            total_chunks, skipped, total_points = process_and_upsert(
-                rows, embedding_service, client, collection_name
-            )
-            total_courses += 1
-            total_chunks_all += total_chunks
-            print(f"  Done: {total_chunks} chunks, {skipped} skipped")
+            for attempt in range(3):
+                try:
+                    total_chunks, skipped, total_points = process_and_upsert(
+                        rows, embedding_service, client, collection_name
+                    )
+                    total_courses += 1
+                    total_chunks_all += total_chunks
+                    print(f"  Done: {total_chunks} chunks, {skipped} skipped")
+                    break
+                except Exception as e:
+                    if attempt < 2:
+                        print(f"  RETRY ({attempt+1}/3): {str(e)[:80]}")
+                        time.sleep(5)
+                    else:
+                        print(f"  FAILED after 3 attempts: {str(e)[:120]}")
     finally:
         conn.close()
 
