@@ -1,6 +1,8 @@
 """
 Re-ingest all courses currently in Qdrant with corrected lecture ordering.
-Uses module_id for ordering instead of id.
+Uses row order (id ASC) from the database, which matches the platform's
+curriculum sequence. Previous ingestion sorted by module_id, which is a
+global platform ID and does NOT represent correct per-course ordering.
 
 Usage: python scripts/reingest_all.py
 """

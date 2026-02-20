@@ -92,8 +92,10 @@ def derive_lecture_order(rows: list) -> list:
 
     Priority:
     1. Explicit chapter_order + lecture_order columns (if both exist)
-    2. module_id column (platform's sequential ordering)
-    3. id column (database insertion order — last resort)
+    2. Row order from source (id ASC from DB / CSV row order)
+       — The platform exports in curriculum order. module_id is NOT
+         sequential per-course (it's a global platform ID assigned at
+         different times), so sorting by it produces wrong chapter order.
     """
     if not rows:
         return rows
@@ -118,17 +120,9 @@ def derive_lecture_order(rows: list) -> list:
         print("  Ordering: using explicit chapter_order + lecture_order")
         return sorted_rows
 
-    # Priority 2: module_id (platform's sequential ordering)
-    has_module_id = 'module_id' in sample and sample['module_id'] is not None
-    if has_module_id:
-        sorted_rows = sorted(rows, key=lambda r: int(r.get('module_id', 0)))
-        for seq, row in enumerate(sorted_rows, start=1):
-            row['_lecture_order'] = seq
-        print("  Ordering: using module_id")
-        return sorted_rows
-
-    # Priority 3: Derive from id/position — rows already ordered by id ASC
-    print("  Ordering: using id (fallback)")
+    # Priority 2: Use row order as-is (rows come ORDER BY id ASC from DB,
+    # which matches the curriculum sequence on the platform)
+    print("  Ordering: using row order (id ASC)")
     for seq, row in enumerate(rows, start=1):
         row['_lecture_order'] = seq
 

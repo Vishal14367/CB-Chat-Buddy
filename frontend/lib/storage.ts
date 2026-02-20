@@ -2,10 +2,16 @@ const GROQ_KEY_STORAGE_KEY = 'groq_api_key';
 const GROQ_KEY_VERIFIED_KEY = 'groq_key_verified';
 const CHAT_PREFS_KEY = 'chat_preferences';
 const CHAT_TOOLTIP_DISMISSED_KEY = 'chat_tooltip_dismissed';
+const MODE_PREFERENCE_KEY = 'chat_mode_preference';
 
 export interface ChatPreferences {
   teachingMode: 'teach' | 'fix';
   responseStyle: 'casual' | 'direct';
+}
+
+export interface ModePreference {
+  mode: 'teach' | 'direct';
+  remembered: boolean;
 }
 
 export const storage = {
@@ -74,6 +80,30 @@ export const storage = {
   clearChatPreferences() {
     if (typeof window !== 'undefined') {
       localStorage.removeItem(CHAT_PREFS_KEY);
+    }
+  },
+
+  // --- Mode Preference ---
+
+  setModePreference(pref: ModePreference) {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(MODE_PREFERENCE_KEY, JSON.stringify(pref));
+    }
+  },
+
+  getModePreference(): ModePreference | null {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem(MODE_PREFERENCE_KEY);
+      if (saved) {
+        try { return JSON.parse(saved) as ModePreference; } catch { return null; }
+      }
+    }
+    return null;
+  },
+
+  clearModePreference() {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem(MODE_PREFERENCE_KEY);
     }
   },
 

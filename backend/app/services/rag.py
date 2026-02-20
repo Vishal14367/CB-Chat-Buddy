@@ -466,10 +466,12 @@ class RAGPipeline:
 
         Returns (response_type, chunks_to_use)
         """
-        # When intent is "previous" and we got chunks, trust the intent detection
-        # even if scores are low (meta-questions like "what was previous lecture?"
-        # have inherently low semantic similarity to actual transcript content).
-        if intent == "previous" and chunks:
+        # When intent is "previous" or "current" and we got chunks, trust the
+        # intent detection even if scores are low. Meta-questions like
+        # "what is this lecture about?" or "what was previous lecture?" have
+        # inherently low semantic similarity to actual transcript content,
+        # but the user's intent is unambiguous — never classify as off-topic.
+        if intent in ("previous", "current") and chunks:
             return "in_scope", chunks[:5]
 
         if not chunks or chunks[0].score < RELEVANCE_THRESHOLD:
@@ -582,9 +584,11 @@ class RAGPipeline:
             player_url = meta.get('player_embed_url', '')
             url = f"{player_url}#t={start_seconds}s" if player_url else ""
 
-            # Display timestamp without leading "00:"
+            # Display timestamp without leading "00:" or millisecond decimals
             ts = meta.get('timestamp_start', '00:00:00')
             display_ts = ts[3:] if ts.startswith('00:') else ts
+            if '.' in display_ts:
+                display_ts = display_ts.split('.')[0]
 
             references.append(Reference(
                 lecture_title=meta.get('lecture_title', ''),

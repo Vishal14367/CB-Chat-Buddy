@@ -103,6 +103,14 @@ if app_mode == "rag":
             print("  WARNING: Qdrant collection not found. Run ingest.py first.")
 
         print("RAG pipeline initialized")
+
+@app.on_event("startup")
+async def startup_event():
+    """Pre-warm caches after the worker process starts (runs once per worker)."""
+    if routes.rag_pipeline and routes.rag_pipeline.vector_store:
+        print("  Pre-warming course catalog cache...")
+        courses_list = routes.rag_pipeline.vector_store.get_all_courses()
+        print(f"  Cached {len(courses_list)} courses")
 else:
     print(f"\nRunning in CSV mode (APP_MODE={app_mode})")
 
@@ -128,4 +136,5 @@ async def health():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    use_reload = os.getenv("RELOAD", "false").lower() == "true"
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=use_reload)

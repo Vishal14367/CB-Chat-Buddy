@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback, memo } from 'react';
 import { api } from '@/lib/api';
-import { storage, ChatPreferences } from '@/lib/storage';
+import { storage, ChatPreferences, ModePreference } from '@/lib/storage';
 import { ChatMessage, ReferenceItem } from '@/types';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -61,39 +61,6 @@ function renderTimestamps(content: string, playerUrl?: string): string {
     const parts = time.split(':');
     const seconds = parseInt(parts[0]) * 60 + parseInt(parts[1]);
     return `[${time}](${playerUrl}#t=${seconds}s)`;
-  });
-}
-
-// Resize image to max dimensions, returns base64 data URL
-function resizeImage(file: File, maxSize: number = 1024): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = document.createElement('img');
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        let { width, height } = img;
-        if (width > maxSize || height > maxSize) {
-          if (width > height) {
-            height = (height / width) * maxSize;
-            width = maxSize;
-          } else {
-            width = (width / height) * maxSize;
-            height = maxSize;
-          }
-        }
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) { reject(new Error('Canvas not supported')); return; }
-        ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', 0.85));
-      };
-      img.onerror = reject;
-      img.src = e.target?.result as string;
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
   });
 }
 
@@ -236,14 +203,11 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
   const [voiceConfidence, setVoiceConfidence] = useState(0);
   const [showRateLimitCTA, setShowRateLimitCTA] = useState(false);
 
-  // Mode toggle: "teach" (Socratic + casual) or "direct" (fix + direct)
+  // Mode system: first-time selector, then locked for session
   const [chatMode, setChatMode] = useState<'teach' | 'direct'>('direct');
-  const [hintStage, setHintStage] = useState<Record<string, number>>({});
-
-  // Screenshot upload
-  const [selectedImage, setSelectedImage] = useState<string | null>(null);
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [showModeSelector, setShowModeSelector] = useState(false);
+  const [rememberPreference, setRememberPreference] = useState(false);
+  const [modeSelected, setModeSelected] = useState(false);
 
   // Inline API key onboarding
   const [inlineApiKey, setInlineApiKey] = useState('');
@@ -257,12 +221,19 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
   const recognitionRef = useRef<any>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const audioStreamRef = useRef<MediaStream | null>(null);
+  const isRecordingRef = useRef(false);
 
-  // Load saved preferences on mount
+  // Load saved mode preference on mount
   useEffect(() => {
-    const saved = storage.getChatPreferences();
-    if (saved) {
-      setChatMode(saved.teachingMode === 'teach' ? 'teach' : 'direct');
+    const saved = storage.getModePreference();
+    if (saved && saved.remembered) {
+      // User previously chose "remember" — apply silently
+      setChatMode(saved.mode);
+      setModeSelected(true);
+      setShowModeSelector(false);
+    } else {
+      // No remembered preference — show selector
+      setShowModeSelector(true);
     }
   }, []);
 
@@ -294,7 +265,7 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
     }
   }, [messages, lectureId]);
 
-  // Speech Recognition
+  // Speech Recognition (single-shot mode for stability)
   useEffect(() => {
     if (typeof window === 'undefined') return;
 
@@ -302,37 +273,23 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
     if (!SpeechRecognition) return;
 
     const recognition = new SpeechRecognition();
-    recognition.continuous = true;
+    recognition.continuous = false;
     recognition.interimResults = true;
     recognition.maxAlternatives = 3;
     recognition.lang = 'en-IN';
 
     let finalTranscript = '';
     let silenceTimer: NodeJS.Timeout | null = null;
-    let watchdogTimer: NodeJS.Timeout | null = null;
-    let isActiveSession = false;
 
     recognition.onstart = () => {
+      isRecordingRef.current = true;
       finalTranscript = '';
-      isActiveSession = true;
       setInterimText('');
       setVoiceConfidence(0);
     };
 
     recognition.onresult = (event: any) => {
       let interimTranscript = '';
-
-      if (watchdogTimer) clearTimeout(watchdogTimer);
-      watchdogTimer = setTimeout(() => {
-        if (isActiveSession) {
-          try {
-            recognition.stop();
-            setTimeout(() => {
-              if (isActiveSession) recognition.start();
-            }, 200);
-          } catch { /* ignore */ }
-        }
-      }, 10000);
 
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i];
@@ -362,46 +319,50 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
         setInterimText(interimTranscript);
       }
 
+      // Auto-stop after 3.5s of silence once we have a transcript
       if (silenceTimer) clearTimeout(silenceTimer);
       silenceTimer = setTimeout(() => {
         if (finalTranscript.trim()) {
-          recognition.stop();
+          isRecordingRef.current = false;
+          try { recognition.stop(); } catch { /* ignore */ }
         }
       }, 3500);
     };
 
     recognition.onerror = (event: any) => {
-      console.error('Speech recognition error:', event.error);
-      if (event.error === 'no-speech') return;
-      if (event.error === 'network') {
+      if (event.error === 'no-speech') {
+        // Show brief hint instead of spamming errors
+        setInterimText('No speech detected. Try again.');
         setTimeout(() => {
-          if (isActiveSession) {
-            try { recognition.start(); } catch { /* ignore */ }
-          }
-        }, 500);
+          if (!isRecordingRef.current) setInterimText('');
+        }, 2000);
         return;
       }
-      isActiveSession = false;
+      if (event.error === 'aborted') return; // Expected when we call stop()
+      console.error('Speech recognition error:', event.error);
+      isRecordingRef.current = false;
       setIsListening(false);
       setInterimText('');
     };
 
     recognition.onend = () => {
-      if (isActiveSession && !finalTranscript.trim()) {
-        try {
-          setTimeout(() => {
-            if (isActiveSession) recognition.start();
-          }, 150);
-          return;
-        } catch { /* fall through to cleanup */ }
+      if (silenceTimer) clearTimeout(silenceTimer);
+
+      // Only auto-restart if user is still listening AND no final transcript yet
+      if (isRecordingRef.current && !finalTranscript.trim()) {
+        setTimeout(() => {
+          if (isRecordingRef.current) {
+            try { recognition.start(); } catch { /* ignore */ }
+          }
+        }, 300);
+        return;
       }
 
-      isActiveSession = false;
+      // Clean stop
+      isRecordingRef.current = false;
       setIsListening(false);
       setInterimText('');
       setVoiceConfidence(0);
-      if (silenceTimer) clearTimeout(silenceTimer);
-      if (watchdogTimer) clearTimeout(watchdogTimer);
 
       if (audioStreamRef.current) {
         audioStreamRef.current.getTracks().forEach(t => t.stop());
@@ -415,8 +376,7 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
 
     return () => {
       if (silenceTimer) clearTimeout(silenceTimer);
-      if (watchdogTimer) clearTimeout(watchdogTimer);
-      isActiveSession = false;
+      isRecordingRef.current = false;
     };
   }, []);
 
@@ -427,13 +387,17 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
     }
 
     if (isListening) {
-      recognitionRef.current.stop();
+      // Signal to onend not to restart
+      isRecordingRef.current = false;
+      try { recognitionRef.current.stop(); } catch { /* ignore */ }
       setIsListening(false);
+      setInterimText('');
       if (audioStreamRef.current) {
         audioStreamRef.current.getTracks().forEach(t => t.stop());
         audioStreamRef.current = null;
       }
     } else {
+      if (isRecordingRef.current) return; // Prevent double-start
       setInput('');
       setInterimText('');
       setVoiceConfidence(0);
@@ -455,50 +419,23 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
       try {
         recognitionRef.current.start();
         setIsListening(true);
-      } catch (err) {
-        try {
-          recognitionRef.current.stop();
-          setTimeout(() => {
+      } catch {
+        // Graceful retry
+        isRecordingRef.current = false;
+        setTimeout(() => {
+          try {
             recognitionRef.current.start();
             setIsListening(true);
-          }, 150);
-        } catch {
-          console.error('Failed to start speech recognition');
-        }
+          } catch {
+            console.error('Failed to start speech recognition');
+          }
+        }, 300);
       }
     }
   }, [isListening]);
 
-  // Handle image selection
-  const handleImageSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (!file.type.startsWith('image/')) {
-      alert('Please select an image file.');
-      return;
-    }
-
-    try {
-      const dataUrl = await resizeImage(file, 1024);
-      setImagePreview(dataUrl);
-      // Send the full data URL so backend preserves correct MIME type
-      setSelectedImage(dataUrl);
-    } catch {
-      alert('Failed to process image. Please try another file.');
-    }
-
-    // Reset file input
-    if (fileInputRef.current) fileInputRef.current.value = '';
-  }, []);
-
-  const clearImage = useCallback(() => {
-    setSelectedImage(null);
-    setImagePreview(null);
-  }, []);
-
   const handleSend = async () => {
-    if ((!input.trim() && !selectedImage) || loading) return;
+    if (!input.trim() || loading) return;
 
     if (isListening) {
       recognitionRef.current?.stop();
@@ -508,7 +445,7 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
     const questionText = input.trim();
 
     // Duplicate detection: check if exact same question was asked in this session
-    if (questionText && answeredQuestionsRef.current.has(questionText.toLowerCase()) && !selectedImage) {
+    if (questionText && answeredQuestionsRef.current.has(questionText.toLowerCase())) {
       const cachedAnswer = answeredQuestionsRef.current.get(questionText.toLowerCase())!;
       const userMessage: EnrichedMessage = { role: 'user', content: questionText, timestamp: new Date() };
       setMessages(prev => [...prev, userMessage, {
@@ -520,19 +457,14 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
       return;
     }
 
-    const userMessage: EnrichedMessage = { role: 'user', content: questionText || '(screenshot)', timestamp: new Date() };
+    const userMessage: EnrichedMessage = { role: 'user', content: questionText, timestamp: new Date() };
     setMessages((prev) => [...prev, userMessage]);
     setInput('');
-    const sentImage = selectedImage;
-    clearImage();
     setLoading(true);
     setIsTyping(true);
     setShowRateLimitCTA(false);
 
     if (inputRef.current) inputRef.current.style.height = 'auto';
-
-    // Get current hint stage for this topic
-    const currentHintStage = questionText ? (hintStage[questionText.toLowerCase()] || 1) : 1;
 
     try {
       const apiKey = storage.getGroqKey();
@@ -545,15 +477,13 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
         await api.chatStream(
           {
             apiKey,
-            message: questionText || 'What is shown in this screenshot?',
+            message: questionText,
             courseTitle,
             currentLectureOrder,
             lectureId,
             history: messages.map(m => ({ role: m.role, content: m.content })),
             teachingMode: chatMode === 'teach' ? 'teach' : 'fix',
             responseStyle: chatMode === 'teach' ? 'casual' : 'direct',
-            hintStage: currentHintStage,
-            imageBase64: sentImage || undefined,
           },
           (token) => {
             streamedContent += token;
@@ -624,24 +554,6 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
     }
   };
 
-  // Hint ladder: "Give me more" advances the hint
-  const handleHintMore = useCallback((question: string) => {
-    const key = question.toLowerCase();
-    const current = hintStage[key] || 1;
-    if (current < 3) {
-      setHintStage(prev => ({ ...prev, [key]: current + 1 }));
-      setInput(question);
-      // Auto-send will be triggered by user clicking send or pressing enter
-    }
-  }, [hintStage]);
-
-  // Hint ladder: "Just tell me" jumps to stage 3
-  const handleHintTellMe = useCallback((question: string) => {
-    const key = question.toLowerCase();
-    setHintStage(prev => ({ ...prev, [key]: 3 }));
-    setInput(question);
-  }, []);
-
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -655,13 +567,24 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
     e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
   };
 
-  // Handle mode change — always persist
-  const handleModeChange = (mode: 'teach' | 'direct') => {
+  // Handle first-time mode selection
+  const handleModeSelect = (mode: 'teach' | 'direct') => {
     setChatMode(mode);
+    setModeSelected(true);
+    setShowModeSelector(false);
+
+    // Also update ChatPreferences for backend compat
     storage.setChatPreferences({
       teachingMode: mode === 'teach' ? 'teach' : 'fix',
       responseStyle: mode === 'teach' ? 'casual' : 'direct',
     });
+
+    if (rememberPreference) {
+      storage.setModePreference({ mode, remembered: true });
+    } else {
+      // Session only — clear any old preference
+      storage.clearModePreference();
+    }
   };
 
   // Inline API key verification handler
@@ -755,16 +678,6 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
     );
   }
 
-  // Get last user message for hint ladder buttons
-  const lastUserMsgIdx = [...messages].reverse().findIndex(m => m.role === 'user');
-  const lastUserMsg = lastUserMsgIdx >= 0 ? messages[messages.length - 1 - lastUserMsgIdx] : null;
-  const lastAssistantMsg = messages[messages.length - 1];
-  const showHintButtons = chatMode === 'teach' &&
-    lastAssistantMsg?.role === 'assistant' &&
-    lastUserMsg &&
-    (hintStage[lastUserMsg.content.toLowerCase()] || 1) < 3 &&
-    !loading;
-
   return (
     <div className="h-full min-h-0 flex flex-col bg-white overflow-hidden">
       {/* Header */}
@@ -818,57 +731,56 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
         </div>
       </div>
 
-      {/* Mode Settings Bar */}
-      <div className="px-3 py-2 bg-[#FAFAFA] border-b border-[#E2E5F1] flex-shrink-0">
-        <div className="flex items-center gap-1.5">
-          <button
-            onClick={() => handleModeChange('teach')}
-            className={`flex-1 px-3 py-1.5 rounded-lg text-[11px] font-medium transition-all ${
-              chatMode === 'teach'
-                ? 'bg-[#3B82F6] text-white'
-                : 'bg-white text-[#8A8690] hover:text-[#1A1A2E] border border-[#E2E5F1]'
-            }`}
-            title="Uses Socratic questioning to help you discover the answer yourself"
-          >
-            Teach Me
-          </button>
-          <button
-            onClick={() => handleModeChange('direct')}
-            className={`flex-1 px-3 py-1.5 rounded-lg text-[11px] font-medium transition-all ${
-              chatMode === 'direct'
-                ? 'bg-[#3B82F6] text-white'
-                : 'bg-white text-[#8A8690] hover:text-[#1A1A2E] border border-[#E2E5F1]'
-            }`}
-            title="Gives you a straight, concise answer immediately"
-          >
-            Direct
-          </button>
-        </div>
-      </div>
-
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3 bg-[#FAFAFA]" role="log" aria-live="polite">
+      <div className="flex-1 relative overflow-y-auto px-4 py-4 space-y-3 bg-[#FAFAFA]" role="log" aria-live="polite">
+        {/* First-time mode selector overlay */}
+        {showModeSelector && (
+          <div className="absolute inset-0 z-10 bg-white/95 backdrop-blur-sm flex items-center justify-center px-6">
+            <div className="w-full max-w-xs text-center">
+              <div className="mb-5">
+                <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-[#EFF6FF] flex items-center justify-center">
+                  <svg className="w-6 h-6 text-[#3B82F6]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z" />
+                  </svg>
+                </div>
+                <p className="text-[15px] font-semibold text-[#1A1A2E] mb-1" style={{ fontFamily: 'Red Hat Display, sans-serif' }}>
+                  How would you like me to help?
+                </p>
+                <p className="text-[12px] text-[#8A8690] leading-relaxed">
+                  Choose your preferred chat style
+                </p>
+              </div>
+              <div className="space-y-2.5 mb-4">
+                <button
+                  onClick={() => handleModeSelect('teach')}
+                  className="w-full px-4 py-3.5 rounded-xl border-2 border-[#3B82F6]/20 bg-[#EFF6FF] text-left transition-all hover:border-[#3B82F6] hover:shadow-md group"
+                >
+                  <p className="text-[13px] font-semibold text-[#3B82F6] group-hover:text-[#2563EB]">Smart Friend</p>
+                  <p className="text-[11px] text-[#8A8690] mt-0.5">Guides you to discover the answer yourself</p>
+                </button>
+                <button
+                  onClick={() => handleModeSelect('direct')}
+                  className="w-full px-4 py-3.5 rounded-xl border-2 border-[#E2E5F1] bg-white text-left transition-all hover:border-[#3B82F6]/40 hover:shadow-md group"
+                >
+                  <p className="text-[13px] font-semibold text-[#1A1A2E] group-hover:text-[#3B82F6]">Direct</p>
+                  <p className="text-[11px] text-[#8A8690] mt-0.5">Gives you a straight, concise answer</p>
+                </button>
+              </div>
+              <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={rememberPreference}
+                  onChange={(e) => setRememberPreference(e.target.checked)}
+                  className="w-3.5 h-3.5 rounded border-[#E2E5F1] text-[#3B82F6] focus:ring-[#3B82F6]/30"
+                />
+                <span className="text-[11px] text-[#8A8690]">Remember my preference</span>
+              </label>
+            </div>
+          </div>
+        )}
         {messages.map((msg, idx) => (
           <MessageBubble key={idx} msg={msg} idx={idx} messages={messages} playerUrl={playerUrl} />
         ))}
-
-        {/* Hint ladder buttons */}
-        {showHintButtons && lastUserMsg && (
-          <div className="flex justify-start pl-10 gap-2 chat-message-enter">
-            <button
-              onClick={() => handleHintMore(lastUserMsg.content)}
-              className="px-3 py-1.5 bg-[#EFF6FF] hover:bg-[#DBEAFE] text-[#3B82F6] text-[11px] font-medium rounded-lg border border-[#DBEAFE] hover:border-[#3B82F6]/40 transition-all"
-            >
-              Give me more
-            </button>
-            <button
-              onClick={() => handleHintTellMe(lastUserMsg.content)}
-              className="px-3 py-1.5 bg-white hover:bg-[#F3F4F6] text-[#8A8690] hover:text-[#1A1A2E] text-[11px] font-medium rounded-lg border border-[#E2E5F1] transition-all"
-            >
-              Just tell me
-            </button>
-          </div>
-        )}
 
         {/* Typing indicator */}
         {isTyping && (
@@ -919,40 +831,8 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
         </div>
       )}
 
-      {/* Screenshot preview */}
-      {imagePreview && (
-        <div className="px-3 py-2 bg-[#FAFAFA] border-t border-[#E2E5F1] flex-shrink-0">
-          <div className="flex items-start gap-2">
-            <div className="relative">
-              <img src={imagePreview} alt="Screenshot preview" className="w-16 h-16 object-cover rounded-lg border border-[#E2E5F1]" />
-              <button
-                onClick={clearImage}
-                className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-[#EF4444] text-white rounded-full flex items-center justify-center text-[10px] hover:bg-[#DC2626] transition-colors"
-                aria-label="Remove screenshot"
-              >
-                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <p className="text-[10px] text-[#F89937] leading-tight mt-1">
-              Screenshots use more tokens than text questions
-            </p>
-          </div>
-        </div>
-      )}
-
       {/* Input area */}
       <div className="px-3 py-3 border-t border-[#E2E5F1] bg-white flex-shrink-0">
-        {/* Hidden file input */}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          onChange={handleImageSelect}
-          className="hidden"
-        />
-
         <div className="flex items-end gap-2">
           {/* Voice button */}
           <button
@@ -971,30 +851,13 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
             </svg>
           </button>
 
-          {/* Screenshot button */}
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={loading || !!selectedImage}
-            className={`flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center transition-all ${
-              selectedImage
-                ? 'bg-[#10B981] text-white'
-                : 'bg-[#EFF6FF] text-[#8A8690] hover:text-[#3B82F6] hover:bg-[#DBEAFE]'
-            } disabled:opacity-40`}
-            title="Upload screenshot"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 00-1.134-.175 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.192 2.192 0 00-1.736-1.039 48.774 48.774 0 00-5.232 0 2.192 2.192 0 00-1.736 1.039l-.821 1.316z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16.5 12.75a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0z" />
-            </svg>
-          </button>
-
           <div className="flex-1 relative">
             <textarea
               ref={inputRef}
               value={input}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
-              placeholder={selectedImage ? "Ask about this screenshot..." : "Ask about this lecture..."}
+              placeholder="Ask about this lecture..."
               maxLength={1000}
               disabled={loading}
               rows={1}
@@ -1005,9 +868,9 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
 
           <button
             onClick={handleSend}
-            disabled={(!input.trim() && !selectedImage) || loading}
+            disabled={!input.trim() || loading}
             className={`flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center transition-all ${
-              (!input.trim() && !selectedImage) || loading
+              !input.trim() || loading
                 ? 'bg-[#E2E5F1] text-[#8A8690]'
                 : 'bg-[#3B82F6] hover:bg-[#2563EB] text-white'
             }`}

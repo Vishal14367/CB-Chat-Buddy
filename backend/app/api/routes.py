@@ -48,13 +48,8 @@ async def get_courses(data: CSVDataSource = Depends(get_csv_data)):
 async def get_course_detail(course_id: str, data: CSVDataSource = Depends(get_csv_data)):
     """Get course with chapters and lectures. Uses Qdrant in RAG mode."""
     if rag_pipeline and rag_pipeline.vector_store:
-        # Qdrant stores course_title, not course_id — reverse the slug
-        all_courses = rag_pipeline.vector_store.get_all_courses()
-        course_title = None
-        for c in all_courses:
-            if c["course_id"] == course_id:
-                course_title = c["course_title"]
-                break
+        # Qdrant stores course_title, not course_id — use cached slug resolver
+        course_title = rag_pipeline.vector_store.resolve_course_title(course_id)
         if course_title:
             course = rag_pipeline.vector_store.get_course_detail(course_title)
             if course:
@@ -183,11 +178,15 @@ async def chat_v2_stream(request: RAGChatRequest):
     # Resolve chapter/lecture titles for query enrichment (helps embedding model)
     chapter_title = ""
     lecture_title = ""
+    # Try CSV first (fast, in-memory), then fall back to Qdrant
+    lecture_detail = None
     if csv_data:
         lecture_detail = csv_data.get_lecture_detail(request.lectureId)
-        if lecture_detail:
-            chapter_title = lecture_detail.get('chapter_title', '')
-            lecture_title = lecture_detail.get('lecture_title', '')
+    if not lecture_detail and rag_pipeline and rag_pipeline.vector_store:
+        lecture_detail = rag_pipeline.vector_store.get_lecture_detail(request.lectureId)
+    if lecture_detail:
+        chapter_title = lecture_detail.get('chapter_title', '')
+        lecture_title = lecture_detail.get('lecture_title', '')
 
     # If screenshot is provided, analyze it first
     image_context = ""

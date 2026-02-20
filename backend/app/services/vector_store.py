@@ -3,11 +3,34 @@ Qdrant vector store service for semantic search over transcript chunks.
 Supports filtered search by lecture_order and course_title for context scoping.
 """
 
+import re
+import time
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, Range, MatchValue
+
+# Cache TTL: 10 minutes (catalog data rarely changes during a session)
+_CACHE_TTL = 600
+
+
+def _slugify(title: str) -> str:
+    """Generate URL-safe slug from course title."""
+    slug = title.lower().strip()
+    slug = re.sub(r'[^a-z0-9\s-]', '', slug)
+    slug = re.sub(r'[\s]+', '-', slug)
+    slug = re.sub(r'-+', '-', slug).strip('-')
+    return slug
+
+
+def _natural_sort_key(lecture: dict) -> tuple:
+    """Sort by lecture_order, then extract leading number from title as tiebreaker."""
+    order = lecture.get("lecture_order", 0)
+    title = lecture.get("lecture_title", "")
+    match = re.match(r'^(\d+)', title.strip())
+    title_num = int(match.group(1)) if match else 999
+    return (order, title_num, title)
 
 
 @dataclass
@@ -33,6 +56,14 @@ class VectorStoreService:
             self.client = QdrantClient(url=qdrant_url)
 
         self.collection_name = collection_name
+
+        # In-memory cache for catalog data (avoids scrolling 18k+ points per request)
+        self._courses_cache: Optional[List[Dict[str, Any]]] = None
+        self._courses_cache_time: float = 0
+        self._course_detail_cache: Dict[str, Dict[str, Any]] = {}
+        self._course_detail_cache_time: Dict[str, float] = {}
+        # Slug → course_title mapping (populated from get_all_courses)
+        self._slug_to_title: Dict[str, str] = {}
 
     def search(
         self,
@@ -244,7 +275,15 @@ class VectorStoreService:
     # ---- Course catalog methods (used in RAG mode instead of CSV) ----
 
     def get_all_courses(self) -> List[Dict[str, Any]]:
-        """Extract unique courses from Qdrant with chapter/lecture counts."""
+        """Extract unique courses from Qdrant with chapter/lecture counts.
+
+        Results are cached in-memory for _CACHE_TTL seconds to avoid
+        scrolling through all ~18k+ points on every page load.
+        """
+        now = time.time()
+        if self._courses_cache and (now - self._courses_cache_time) < _CACHE_TTL:
+            return self._courses_cache
+
         courses: Dict[str, Dict[str, set]] = {}
         offset = None
 
@@ -274,19 +313,62 @@ class VectorStoreService:
 
         result = []
         for course_title, data in sorted(courses.items()):
-            course_id = course_title.lower().replace(' ', '-')
+            course_id = _slugify(course_title)
             result.append({
                 "course_id": course_id,
                 "course_title": course_title,
                 "chapter_count": len(data["chapters"]),
                 "lecture_count": len(data["lectures"]),
             })
+            self._slug_to_title[course_id] = course_title
+
+        self._courses_cache = result
+        self._courses_cache_time = now
         return result
 
+    def resolve_course_title(self, course_id_slug: str) -> Optional[str]:
+        """Fast slug-to-title resolution using cached mapping.
+
+        Tries exact match first, then normalized slug, then substring fallback.
+        """
+        # Try exact match
+        if course_id_slug in self._slug_to_title:
+            return self._slug_to_title[course_id_slug]
+
+        # Normalize the incoming slug and try again
+        normalized = _slugify(course_id_slug.replace('-', ' '))
+        if normalized in self._slug_to_title:
+            return self._slug_to_title[normalized]
+
+        # Cache miss — populate it
+        self.get_all_courses()
+
+        if course_id_slug in self._slug_to_title:
+            return self._slug_to_title[course_id_slug]
+        if normalized in self._slug_to_title:
+            return self._slug_to_title[normalized]
+
+        # Substring fallback for resilience
+        for slug, title in self._slug_to_title.items():
+            if course_id_slug in slug or slug in course_id_slug:
+                return title
+
+        return None
+
     def get_course_detail(self, course_title: str) -> Optional[Dict[str, Any]]:
-        """Build full course structure (chapters + lectures) from Qdrant."""
-        chapters: Dict[str, Dict[str, Dict]] = {}
-        chapter_min_order: Dict[str, int] = {}
+        """Build full course structure (chapters + lectures) from Qdrant.
+
+        Results are cached in-memory for _CACHE_TTL seconds.
+        """
+        now = time.time()
+        cached = self._course_detail_cache.get(course_title)
+        cached_time = self._course_detail_cache_time.get(course_title, 0)
+        if cached and (now - cached_time) < _CACHE_TTL:
+            return cached
+
+        chapters: Dict[str, Dict[str, Dict]] = {}       # ch_key -> {lid -> lecture}
+        chapter_min_order: Dict[str, int] = {}          # ch_key -> min_order
+        chapter_display_title: Dict[str, str] = {}      # ch_key -> first-seen title
         offset = None
 
         while True:
@@ -314,17 +396,19 @@ class VectorStoreService:
             for point in results:
                 p = point.payload
                 ch = p.get("chapter_title", "Unknown Chapter")
+                ch_key = ch.strip().lower()  # Normalized key for dedup
                 lid = str(p.get("lecture_id", ""))
                 lorder = p.get("lecture_order", 0)
 
-                if ch not in chapters:
-                    chapters[ch] = {}
-                    chapter_min_order[ch] = lorder
-                if lorder < chapter_min_order[ch]:
-                    chapter_min_order[ch] = lorder
+                if ch_key not in chapters:
+                    chapters[ch_key] = {}
+                    chapter_min_order[ch_key] = lorder
+                    chapter_display_title[ch_key] = ch.strip()
+                if lorder < chapter_min_order[ch_key]:
+                    chapter_min_order[ch_key] = lorder
 
-                if lid and lid not in chapters[ch]:
-                    chapters[ch][lid] = {
+                if lid and lid not in chapters[ch_key]:
+                    chapters[ch_key][lid] = {
                         "lecture_id": lid,
                         "lecture_title": p.get("lecture_title", ""),
                         "thumbnail_url": p.get("player_embed_url", ""),
@@ -338,23 +422,27 @@ class VectorStoreService:
         if not chapters:
             return None
 
-        course_id = course_title.lower().replace(' ', '-')
+        course_id = _slugify(course_title)
         sorted_chapters = sorted(chapter_min_order.items(), key=lambda x: x[1])
 
-        return {
+        result = {
             "course_id": course_id,
             "course_title": course_title,
             "chapters": [
                 {
-                    "chapter_title": ch_title,
+                    "chapter_title": chapter_display_title[ch_key],
                     "lectures": sorted(
-                        chapters[ch_title].values(),
-                        key=lambda x: x["lecture_order"]
+                        chapters[ch_key].values(),
+                        key=_natural_sort_key
                     )
                 }
-                for ch_title, _ in sorted_chapters
+                for ch_key, _ in sorted_chapters
             ]
         }
+
+        self._course_detail_cache[course_title] = result
+        self._course_detail_cache_time[course_title] = now
+        return result
 
     def get_lecture_detail(self, lecture_id: str) -> Optional[Dict[str, Any]]:
         """Get lecture metadata + reassembled transcript from Qdrant chunks."""
