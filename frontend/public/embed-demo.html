@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chat Buddy — Embed Demo</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      min-height: 100vh;
+    }
+
+    /* ── Top bar ──────────────────────────────────────────── */
+    header {
+      background: #1e293b;
+      border-bottom: 1px solid #334155;
+      padding: 0 24px;
+      height: 52px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    header .logo {
+      font-weight: 700;
+      font-size: 16px;
+      color: #f1f5f9;
+      letter-spacing: -.3px;
+    }
+    header .logo span { color: #3b82f6; }
+    header .badge {
+      font-size: 10px;
+      font-weight: 600;
+      background: #1d4ed8;
+      color: #bfdbfe;
+      padding: 2px 8px;
+      border-radius: 20px;
+      letter-spacing: .3px;
+      text-transform: uppercase;
+    }
+
+    /* ── Course info breadcrumb ──────────────────────────── */
+    .breadcrumb {
+      background: #1e293b;
+      border-bottom: 1px solid #1e3a5f;
+      padding: 8px 24px;
+      font-size: 12px;
+      color: #64748b;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .breadcrumb span { color: #94a3b8; }
+    .breadcrumb .sep { color: #334155; }
+    .breadcrumb .active { color: #60a5fa; font-weight: 500; }
+
+    /* ── Main layout ─────────────────────────────────────── */
+    .layout {
+      display: grid;
+      grid-template-columns: 1fr 380px;
+      height: calc(100vh - 52px - 34px);
+    }
+
+    /* ── Video panel ─────────────────────────────────────── */
+    .video-panel {
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid #1e3a5f;
+    }
+    .video-placeholder {
+      background: #0a0f1e;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      border-bottom: 1px solid #1e3a5f;
+    }
+    .play-btn {
+      width: 72px;
+      height: 72px;
+      background: rgba(59,130,246,0.15);
+      border: 2px solid rgba(59,130,246,0.4);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all .2s;
+    }
+    .play-btn:hover { background: rgba(59,130,246,0.25); transform: scale(1.05); }
+    .play-btn svg { fill: #3b82f6; margin-left: 4px; }
+    .video-placeholder h2 {
+      font-size: 16px;
+      font-weight: 600;
+      color: #cbd5e1;
+      text-align: center;
+      max-width: 400px;
+    }
+    .video-placeholder p {
+      font-size: 13px;
+      color: #475569;
+    }
+
+    /* Progress bar */
+    .video-controls {
+      padding: 12px 20px;
+      background: #1a2744;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .progress-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 11px;
+      color: #64748b;
+    }
+    .progress-bar {
+      flex: 1;
+      height: 3px;
+      background: #1e3a5f;
+      border-radius: 2px;
+      overflow: hidden;
+      cursor: pointer;
+    }
+    .progress-fill {
+      width: 38%;
+      height: 100%;
+      background: linear-gradient(90deg, #3b82f6, #60a5fa);
+      border-radius: 2px;
+    }
+    .controls-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .ctrl-btn {
+      background: none;
+      border: none;
+      color: #64748b;
+      cursor: pointer;
+      padding: 4px;
+      border-radius: 6px;
+      transition: all .15s;
+      display: flex;
+    }
+    .ctrl-btn:hover { color: #94a3b8; background: #1e3a5f; }
+    .ctrl-btn.play-ctrl { color: #3b82f6; }
+    .ctrl-btn.play-ctrl:hover { color: #60a5fa; }
+    .spacer { flex: 1; }
+    .quality-badge {
+      font-size: 10px;
+      font-weight: 600;
+      color: #475569;
+      background: #1e3a5f;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    /* ── Chat panel (iframe) ─────────────────────────────── */
+    .chat-panel {
+      display: flex;
+      flex-direction: column;
+      background: #f8fafc;
+    }
+    .chat-panel iframe {
+      flex: 1;
+      border: none;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* ── Lecture selector below video ───────────────────── */
+    .lecture-tabs {
+      display: flex;
+      gap: 2px;
+      padding: 0 4px;
+      background: #1a2744;
+      overflow-x: auto;
+    }
+    .lecture-tab {
+      padding: 8px 14px;
+      font-size: 11px;
+      font-weight: 500;
+      color: #64748b;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      white-space: nowrap;
+      transition: all .15s;
+    }
+    .lecture-tab:hover { color: #94a3b8; }
+    .lecture-tab.active { color: #60a5fa; border-bottom-color: #3b82f6; }
+
+    /* ── Lecture ID switcher banner ─────────────────────── */
+    #switcher {
+      background: #1e293b;
+      border-top: 1px solid #1e3a5f;
+      padding: 8px 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 12px;
+      color: #64748b;
+    }
+    #switcher label { color: #94a3b8; white-space: nowrap; }
+    #lecture-id-input {
+      background: #0f172a;
+      border: 1px solid #334155;
+      color: #e2e8f0;
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      width: 100px;
+      outline: none;
+    }
+    #lecture-id-input:focus { border-color: #3b82f6; }
+    #load-btn {
+      background: #1d4ed8;
+      color: #bfdbfe;
+      border: none;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 5px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background .15s;
+    }
+    #load-btn:hover { background: #2563eb; }
+    .hint {
+      margin-left: auto;
+      font-size: 11px;
+      color: #334155;
+    }
+    .hint strong { color: #475569; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="logo">Codebasics <span>Chat Buddy</span></div>
+    <div class="badge">Embed Demo</div>
+  </header>
+
+  <div class="breadcrumb">
+    AI Automation for Data Professionals
+    <span class="sep">›</span>
+    Chapter 1: Introduction
+    <span class="sep">›</span>
+    <span class="active" id="lecture-name">Project 1: Automating CSV Append from Email</span>
+  </div>
+
+  <div class="layout">
+
+    <!-- LEFT: Mock video player -->
+    <div class="video-panel">
+
+      <div class="lecture-tabs">
+        <div class="lecture-tab" data-id="1528">Intro</div>
+        <div class="lecture-tab" data-id="1529">Tools & Projects</div>
+        <div class="lecture-tab active" data-id="1532">Project 1: CSV Automation</div>
+        <div class="lecture-tab" data-id="1533">Project 2: API Automation</div>
+        <div class="lecture-tab" data-id="1534">NL-to-SQL Query</div>
+        <div class="lecture-tab" data-id="1537">Set Up & Validation</div>
+      </div>
+
+      <div class="video-placeholder">
+        <div class="play-btn">
+          <svg width="28" height="28" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+        </div>
+        <h2 id="video-title">Project 1: Automating CSV Append from Email</h2>
+        <p>AI Automation for Data Professionals</p>
+      </div>
+
+      <div class="video-controls">
+        <div class="progress-row">
+          <span>14:22</span>
+          <div class="progress-bar"><div class="progress-fill"></div></div>
+          <span>37:45</span>
+        </div>
+        <div class="controls-row">
+          <button class="ctrl-btn">
+            <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6 8.5 6V6z"/></svg>
+          </button>
+          <button class="ctrl-btn play-ctrl">
+            <svg width="18" height="18" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+          </button>
+          <button class="ctrl-btn">
+            <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zm2-8.14 5.01 2.14L8 14.14V9.86z"/><path d="M16 6h2v12h-2z"/></svg>
+          </button>
+          <div class="spacer"></div>
+          <span style="font-size:11px;color:#475569;">1.0×</span>
+          <div class="quality-badge">HD</div>
+          <button class="ctrl-btn">
+            <svg width="15" height="15" fill="currentColor" viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: Embedded Chat Buddy via iframe -->
+    <div class="chat-panel">
+      <iframe
+        id="chat-iframe"
+        src="http://localhost:3000/embed/1532"
+        allow="microphone"
+        title="Chat Buddy — AI lecture assistant"
+      ></iframe>
+    </div>
+
+  </div>
+
+  <!-- Bottom switcher bar -->
+  <div id="switcher">
+    <label>Try a different lecture ID:</label>
+    <input id="lecture-id-input" type="number" value="1532" min="1528" max="2000" />
+    <button id="load-btn">Load</button>
+    <span class="hint">Available: <strong>1528–1535, 1537–1545</strong> &nbsp;|&nbsp; src: <code style="color:#475569">localhost:3000/embed/{id}</code></span>
+  </div>
+
+  <script>
+    const iframe = document.getElementById('chat-iframe');
+    const input  = document.getElementById('lecture-id-input');
+    const btn    = document.getElementById('load-btn');
+    const tabs   = document.querySelectorAll('.lecture-tab');
+    const title  = document.getElementById('video-title');
+    const name   = document.getElementById('lecture-name');
+
+    const TITLES = {
+      '1528': 'How This Course Will Help You',
+      '1529': 'What Are The Tools & Projects I Will Learn?',
+      '1530': 'Join Discord',
+      '1531': 'How To Get Maximum Benefit',
+      '1532': 'Project 1: Automating CSV Append from Email',
+      '1533': 'Project 2: API Automation — Exchange Rate',
+      '1534': 'Creating a Natural Language-to-SQL Query',
+      '1535': 'Automating Data Extraction & Refresh',
+      '1537': 'Set Up and Validation',
+      '1538': 'Data Extraction',
+      '1539': 'Data Addition and Final Tweaks',
+    };
+
+    function loadLecture(id) {
+      const t = TITLES[id] || `Lecture ${id}`;
+      iframe.src = `http://localhost:3000/embed/${id}`;
+      input.value = id;
+      title.textContent = t;
+      name.textContent = t;
+      tabs.forEach(tab => tab.classList.toggle('active', tab.dataset.id === id));
+    }
+
+    btn.addEventListener('click', () => loadLecture(input.value.trim()));
+    input.addEventListener('keydown', e => e.key === 'Enter' && loadLecture(input.value.trim()));
+    tabs.forEach(tab => tab.addEventListener('click', () => loadLecture(tab.dataset.id)));
+  </script>
+
+</body>
+</html>

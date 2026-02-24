@@ -133,9 +133,12 @@ export default function CourseDetailPage() {
                             </div>
                             <span className="text-[13px] text-[#1A1A2E]/80 group-hover:text-[#1A1A2E] font-medium transition-colors">{lecture.lecture_title}</span>
                           </div>
-                          {lecture.duration && (
-                            <span className="text-[11px] text-[#8A8690] font-medium tabular-nums">{Math.floor(lecture.duration / 60)}:{(lecture.duration % 60).toString().padStart(2, '0')}</span>
-                          )}
+                          {lecture.duration != null && (() => {
+                            const dur = Math.round(lecture.duration);
+                            return (
+                              <span className="text-[11px] text-[#8A8690] font-medium tabular-nums">{Math.floor(dur / 60)}:{(dur % 60).toString().padStart(2, '0')}</span>
+                            );
+                          })()}
                         </Link>
                       ))}
                     </div>

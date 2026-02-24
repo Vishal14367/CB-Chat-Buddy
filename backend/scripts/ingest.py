@@ -195,6 +195,9 @@ def process_and_upsert(
         lecture_order = row.get('_lecture_order', 0)
         player_embed_url = row.get('player_embed_url', '')
         transcript = row.get('transcript', '')
+        # Lecture-level duration (integer seconds from CSV/DB)
+        raw_duration = row.get('duration')
+        lecture_duration = int(raw_duration) if raw_duration is not None and str(raw_duration) != 'nan' else None
 
         if not transcript or (hasattr(transcript, '__class__') and str(transcript) == 'nan'):
             skipped_lectures += 1
@@ -231,6 +234,7 @@ def process_and_upsert(
                     "timestamp_start": chunk.timestamp_start,
                     "timestamp_end": chunk.timestamp_end,
                     "duration_seconds": chunk.duration_seconds,
+                    "lecture_duration": lecture_duration,
                     "player_embed_url": player_embed_url,
                     "text": chunk.text
                 }

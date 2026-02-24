@@ -25,12 +25,12 @@ interface EnrichedMessage extends ChatMessage {
   timestamp?: Date;
 }
 
-// Professional English greetings
+// Professional English greetings (subtly mention Hinglish support)
 const GREETING_MESSAGES = [
-  "Hey! I'm **Peter Pandey**, your learning buddy for this lecture. What would you like to understand better?",
-  "Hi there! Peter Pandey here. Got any doubts from this lecture? Fire away!",
-  "Hello! I'm **Peter Pandey**. Ready to help you understand this lecture. What's on your mind?",
-  "Hey! Peter here. Ask me anything about this lecture and let's figure it out together!",
+  "Hey! I'm **Peter Pandey**, your learning buddy for this lecture. Ask me anything in English or Hinglish!",
+  "Hi there! Peter Pandey here. Got any doubts from this lecture? Fire away in English or Hinglish!",
+  "Hello! I'm **Peter Pandey**. Ready to help you with this lecture. Ask away... English ya Hinglish, whatever works!",
+  "Hey! Peter here. Ask me anything about this lecture... English or Hinglish, I'm good with both!",
 ];
 
 function formatMessageContent(content: string): string {
@@ -434,7 +434,7 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
     }
   }, [isListening]);
 
-  const handleSend = async () => {
+  const handleSend = useCallback(async () => {
     if (!input.trim() || loading) return;
 
     if (isListening) {
@@ -552,20 +552,21 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
       setLoading(false);
       setIsTyping(false);
     }
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [input, loading, isListening, courseTitle, currentLectureOrder, lectureId, messages, chatMode]);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
-  };
+  }, [handleSend]);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+  const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value);
     e.target.style.height = 'auto';
     e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
-  };
+  }, []);
 
   // Handle first-time mode selection
   const handleModeSelect = (mode: 'teach' | 'direct') => {
@@ -642,12 +643,15 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
             </div>
 
             <div className="space-y-3">
+              <label htmlFor="groq-api-key" className="sr-only">Groq API key</label>
               <input
+                id="groq-api-key"
                 type="password"
                 value={inlineApiKey}
                 onChange={(e) => { setInlineApiKey(e.target.value); setInlineError(null); }}
                 placeholder="gsk_..."
-                className="w-full px-3.5 py-2.5 bg-[#FAFAFA] border border-[#E2E5F1] rounded-lg focus:outline-none focus:border-[#3B82F6]/40 focus:bg-white transition-all text-sm placeholder-[#8A8690]"
+                aria-label="Groq API key"
+                className="w-full px-3.5 py-2.5 bg-[#FAFAFA] border border-[#E2E5F1] rounded-lg focus:outline-none focus:border-[#3B82F6] focus:ring-2 focus:ring-[#3B82F6]/20 focus:bg-white transition-all text-sm placeholder-[#8A8690]"
                 onKeyDown={(e) => e.key === 'Enter' && handleInlineVerify()}
               />
               <button
@@ -755,7 +759,10 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
                   onClick={() => handleModeSelect('teach')}
                   className="w-full px-4 py-3.5 rounded-xl border-2 border-[#3B82F6]/20 bg-[#EFF6FF] text-left transition-all hover:border-[#3B82F6] hover:shadow-md group"
                 >
-                  <p className="text-[13px] font-semibold text-[#3B82F6] group-hover:text-[#2563EB]">Smart Friend</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-[13px] font-semibold text-[#3B82F6] group-hover:text-[#2563EB]">Smart Friend</p>
+                    <span className="text-[9px] font-semibold text-white bg-[#3B82F6] px-1.5 py-0.5 rounded-full leading-none">Recommended</span>
+                  </div>
                   <p className="text-[11px] text-[#8A8690] mt-0.5">Guides you to discover the answer yourself</p>
                 </button>
                 <button
@@ -771,7 +778,7 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
                   type="checkbox"
                   checked={rememberPreference}
                   onChange={(e) => setRememberPreference(e.target.checked)}
-                  className="w-3.5 h-3.5 rounded border-[#E2E5F1] text-[#3B82F6] focus:ring-[#3B82F6]/30"
+                  className="w-3.5 h-3.5 rounded border-[#E2E5F1] text-[#3B82F6] focus:ring-2 focus:ring-[#3B82F6] focus:ring-offset-1"
                 />
                 <span className="text-[11px] text-[#8A8690]">Remember my preference</span>
               </label>
@@ -842,8 +849,9 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
               isListening
                 ? 'bg-[#3B82F6] text-white voice-pulse'
                 : 'bg-[#EFF6FF] text-[#8A8690] hover:text-[#3B82F6] hover:bg-[#DBEAFE]'
-            } disabled:opacity-40`}
+            } disabled:opacity-40 focus:outline-none focus:ring-2 focus:ring-[#3B82F6] focus:ring-offset-1`}
             title="Voice input (English & Hinglish)"
+            aria-label={isListening ? 'Stop voice input' : 'Start voice input'}
           >
             <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
               <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
@@ -857,11 +865,12 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
               value={input}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
-              placeholder="Ask about this lecture..."
+              placeholder="Ask in English or Hinglish..."
               maxLength={1000}
               disabled={loading}
               rows={1}
-              className="w-full px-3.5 py-2 bg-[#FAFAFA] border border-[#E2E5F1] rounded-xl focus:outline-none focus:border-[#3B82F6]/40 focus:bg-white disabled:opacity-50 text-[13px] transition-all placeholder-[#8A8690] resize-none leading-relaxed"
+              aria-label="Type your question"
+              className="w-full px-3.5 py-2 bg-[#FAFAFA] border border-[#E2E5F1] rounded-xl focus:outline-none focus:border-[#3B82F6] focus:ring-2 focus:ring-[#3B82F6]/20 focus:bg-white disabled:opacity-50 text-[13px] transition-all placeholder-[#8A8690] resize-none leading-relaxed"
               style={{ minHeight: '36px', maxHeight: '120px' }}
             />
           </div>
@@ -869,7 +878,8 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
           <button
             onClick={handleSend}
             disabled={!input.trim() || loading}
-            className={`flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center transition-all ${
+            aria-label="Send message"
+            className={`flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center transition-all focus:outline-none focus:ring-2 focus:ring-[#3B82F6] focus:ring-offset-1 ${
               !input.trim() || loading
                 ? 'bg-[#E2E5F1] text-[#8A8690]'
                 : 'bg-[#3B82F6] hover:bg-[#2563EB] text-white'

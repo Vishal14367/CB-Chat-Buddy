@@ -61,13 +61,21 @@ class CSVDataSource:
         self.df = pd.read_csv(self.csv_path, encoding='utf-8-sig')
 
         # Build lecture lookup and course structure
-        courses = defaultdict(lambda: defaultdict(list))
+        # Use a normalized (lowercased) chapter key to merge case-variant duplicates
+        courses = defaultdict(dict)  # course -> {ch_key -> [lectures]}
 
         # Track per-course sequential ordering (0-based)
         course_counters = defaultdict(int)
 
         # Track the earliest row/module_id per chapter for correct chapter ordering
         chapter_first_key = defaultdict(lambda: defaultdict(lambda: float('inf')))
+
+        # Map normalized chapter key -> first-seen display title
+        chapter_display_title: Dict[str, Dict[str, str]] = defaultdict(dict)
+
+        # Track seen lectures per course by (title, duration) to catch cross-chapter duplicates
+        # that share the same content but have different DB IDs
+        seen_lectures: Dict[str, set] = defaultdict(set)
 
         for idx, row in self.df.iterrows():
             # Generate lecture ID
@@ -78,24 +86,42 @@ class CSVDataSource:
             normalized_transcript = normalize_vtt_transcript(raw_transcript)
 
             course_title = row.get('course_title', 'Unknown Course')
-            chapter_title = row.get('chapter_title', 'Unknown Chapter')
+            chapter_title = str(row.get('chapter_title', 'Unknown Chapter')).strip()
+
+            # Normalize chapter key for case-insensitive merge
+            ch_key = chapter_title.lower()
+
+            # Track chapter ordering using CSV row index (which preserves the
+            # intended teaching sequence). module_id is an internal DB key and
+            # does not reliably reflect chapter order.
+            if idx < chapter_first_key[course_title][ch_key]:
+                chapter_first_key[course_title][ch_key] = idx
+
+            # Keep first-seen casing as display title
+            if ch_key not in chapter_display_title[course_title]:
+                chapter_display_title[course_title][ch_key] = chapter_title
+
+            # Deduplicate: skip if a lecture with the same title+duration already
+            # exists in this course (catches content re-added under different chapter
+            # names or IDs, e.g. Python "JSON & APIs" vs "JSON, Generators" + "APIs")
+            lecture_title_val = str(row.get('lecture_title', ''))
+            duration_val = row['duration'] if 'duration' in row and not pd.isna(row.get('duration')) else None
+            dedup_key = f"{lecture_title_val}|{duration_val}"
+            if dedup_key in seen_lectures[course_title]:
+                continue
+            seen_lectures[course_title].add(dedup_key)
 
             # Per-course sequential order
             per_course_order = course_counters[course_title]
             course_counters[course_title] += 1
 
-            # Track chapter ordering: prefer module_id if available, else row index
-            module_id = row.get('module_id', None)
-            order_key = int(module_id) if module_id is not None and not pd.isna(module_id) else idx
-            if order_key < chapter_first_key[course_title][chapter_title]:
-                chapter_first_key[course_title][chapter_title] = order_key
-
-            # Store lecture data
+            # Store lecture data (use display title for the chapter)
+            display_ch = chapter_display_title[course_title][ch_key]
             lecture_data = {
                 'lecture_id': lecture_id,
                 'lecture_title': row.get('lecture_title', ''),
                 'course_title': course_title,
-                'chapter_title': chapter_title,
+                'chapter_title': display_ch,
                 'transcript': normalized_transcript,
                 'thumbnail_url': row.get('player_embed_url', ''),
                 'duration': int(row['duration']) if 'duration' in row and not pd.isna(row['duration']) else None,
@@ -104,7 +130,10 @@ class CSVDataSource:
 
             self.lectures_by_id[lecture_id] = lecture_data
 
-            courses[course_title][chapter_title].append({
+            if ch_key not in courses[course_title]:
+                courses[course_title][ch_key] = []
+
+            courses[course_title][ch_key].append({
                 'lecture_id': lecture_id,
                 'lecture_title': row.get('lecture_title', ''),
                 'thumbnail_url': row.get('player_embed_url', ''),
@@ -117,9 +146,10 @@ class CSVDataSource:
         for course_title, chapters in courses.items():
             course_id = course_title.lower().replace(' ', '-')
 
-            # Sort chapter titles by their earliest module_id / row index
-            sorted_ch_titles = sorted(
-                chapters.keys(),
+            # Sort normalized chapter keys by their earliest row index
+            # Only include chapters that have remaining lectures after dedup
+            sorted_ch_keys = sorted(
+                [ch for ch in chapters.keys() if len(chapters[ch]) > 0],
                 key=lambda ch: chapter_first_key[course_title][ch]
             )
 
@@ -128,10 +158,10 @@ class CSVDataSource:
                 'course_title': course_title,
                 'chapters': [
                     {
-                        'chapter_title': ch_title,
-                        'lectures': sorted(chapters[ch_title], key=lambda x: x['lecture_order'])
+                        'chapter_title': chapter_display_title[course_title][ch_key],
+                        'lectures': sorted(chapters[ch_key], key=lambda x: x['lecture_order'])
                     }
-                    for ch_title in sorted_ch_titles
+                    for ch_key in sorted_ch_keys
                 ]
             }
     

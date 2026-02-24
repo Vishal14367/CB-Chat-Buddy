@@ -47,6 +47,26 @@ sql_full.csv
 # Root-level images (not frontend/public)
 /*.png
 
+# Root-level dev / debug scripts
+check_*.py
+final_scan.py
+test_api_v2.py
+embed-test.html
+
+# Output text dumps
+*_output.txt
+*_chapters.txt
+*_full_list.txt
+*_rows.txt
+matches.txt
+qdrant_*.txt
+reingest_log.txt
+chatbot\ feedback.txt
+AI_Course_Buddy_Bot_PRD.txt
+
+# Backend test scripts (keep scripts/ but not ad-hoc test files)
+backend/test_*.py
+
 # Dev artifacts
 CHANGES_SUMMARY.txt
 FIX_WRONG_LECTURE_MAPPING.txt

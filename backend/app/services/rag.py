@@ -84,7 +84,7 @@ class RAGPipeline:
         """
         correlation_id = str(uuid.uuid4())[:8]
         logger.info(
-            f"[{correlation_id}] RAG request: question={question[:60]}... | lecture_id={lecture_id} | course={course_title}"
+            f"[{correlation_id}] RAG request: lecture_id={lecture_id} | course={course_title}"
         )
         # Step 1: Enrich query with lecture context for better semantic matching.
         # "What is this lecture about?" has no useful signal for the embedding model.
@@ -428,8 +428,8 @@ class RAGPipeline:
                 full_response += token
                 yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
         except Exception as e:
-                error_msg = str(e)
-                yield f"data: {json.dumps({'type': 'error', 'content': error_msg})}\n\n"
+                logger.error(f"[{correlation_id}] LLM streaming error: {e}")
+                yield f"data: {json.dumps({'type': 'error', 'content': 'An error occurred while generating the response. Please try again.'})}\n\n"
                 yield f"data: {json.dumps({'type': 'done', 'references': [], 'responseType': 'error'})}\n\n"
                 return
 

@@ -1,6 +1,8 @@
 import json
+import logging
+import re
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Path
 from fastapi.responses import StreamingResponse
 from app.models.schemas import (
     Course, CourseDetail, LectureDetail,
@@ -13,6 +15,11 @@ from app.services.retrieval import LectureRetriever
 from app.services.llm import GroqLLMService
 from typing import List, Optional
 import os
+
+logger = logging.getLogger(__name__)
+
+# Safe pattern for path parameters (alphanumeric, hyphens, underscores only)
+_SAFE_ID_PATTERN = re.compile(r'^[a-zA-Z0-9_\-]+$')
 
 router = APIRouter()
 
@@ -47,6 +54,8 @@ async def get_courses(data: CSVDataSource = Depends(get_csv_data)):
 @router.get("/courses/{course_id}", response_model=CourseDetail)
 async def get_course_detail(course_id: str, data: CSVDataSource = Depends(get_csv_data)):
     """Get course with chapters and lectures. Uses Qdrant in RAG mode."""
+    if not _SAFE_ID_PATTERN.match(course_id):
+        raise HTTPException(status_code=400, detail="Invalid course_id format")
     if rag_pipeline and rag_pipeline.vector_store:
         # Qdrant stores course_title, not course_id — use cached slug resolver
         course_title = rag_pipeline.vector_store.resolve_course_title(course_id)
@@ -65,6 +74,8 @@ async def get_course_detail(course_id: str, data: CSVDataSource = Depends(get_cs
 @router.get("/lectures/{lecture_id}", response_model=LectureDetail)
 async def get_lecture_detail(lecture_id: str, data: CSVDataSource = Depends(get_csv_data)):
     """Get lecture metadata and transcript. Uses Qdrant in RAG mode."""
+    if not _SAFE_ID_PATTERN.match(lecture_id):
+        raise HTTPException(status_code=400, detail="Invalid lecture_id format")
     if rag_pipeline and rag_pipeline.vector_store:
         lecture = rag_pipeline.vector_store.get_lecture_detail(lecture_id)
         if lecture:
@@ -142,8 +153,9 @@ async def chat(
         )
     
     except Exception as e:
-        # Handle LLM errors
+        # Handle LLM errors — log internally, return sanitized message to client
         error_msg = str(e)
+        logger.error(f"Chat endpoint error: {error_msg}")
         if "rate limit" in error_msg.lower():
             return ChatResponse(
                 message="Oops, looks like you've hit the rate limit! If this is a per-minute limit, just wait about **60 seconds** and try again. If you've used up your daily tokens, they reset at **midnight UTC** (every 24 hours). In the meantime, our [Discord community](" + service.discord_url + ") is always there to help!",
@@ -153,7 +165,7 @@ async def chat(
         elif "invalid api key" in error_msg.lower():
             raise HTTPException(status_code=401, detail="Invalid API key")
         else:
-            raise HTTPException(status_code=500, detail=error_msg)
+            raise HTTPException(status_code=500, detail="An error occurred. Please try again.")
 
 
 # --- RAG v2 Endpoints ---
@@ -218,8 +230,8 @@ async def chat_v2_stream(request: RAGChatRequest):
             ):
                 yield event
         except Exception as e:
-            error_msg = str(e)
-            yield f"data: {json.dumps({'type': 'error', 'content': f'Error: {error_msg}'})}\n\n"
+            logger.error(f"SSE stream error: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'content': 'An error occurred. Please try again.'})}\n\n"
             yield f"data: {json.dumps({'type': 'done', 'references': [], 'responseType': 'error'})}\n\n"
 
     return StreamingResponse(

@@ -50,10 +50,11 @@ class VectorStoreService:
         qdrant_api_key: Optional[str] = None,
         collection_name: str = "course_transcripts"
     ):
+        # 10-second timeout on all Qdrant HTTP requests; prevents hanging queries
         if qdrant_api_key:
-            self.client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
+            self.client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key, timeout=10)
         else:
-            self.client = QdrantClient(url=qdrant_url)
+            self.client = QdrantClient(url=qdrant_url, timeout=10)
 
         self.collection_name = collection_name
 
@@ -408,11 +409,17 @@ class VectorStoreService:
                     chapter_min_order[ch_key] = lorder
 
                 if lid and lid not in chapters[ch_key]:
+                    # Prefer lecture_duration (integer from CSV) over chunk-level
+                    # duration_seconds (float); fall back for older ingested data
+                    dur = p.get("lecture_duration")
+                    if dur is None:
+                        raw_dur = p.get("duration_seconds")
+                        dur = round(raw_dur) if raw_dur is not None else None
                     chapters[ch_key][lid] = {
                         "lecture_id": lid,
                         "lecture_title": p.get("lecture_title", ""),
                         "thumbnail_url": p.get("player_embed_url", ""),
-                        "duration": p.get("duration_seconds"),
+                        "duration": dur,
                         "lecture_order": lorder,
                     }
 
@@ -467,6 +474,10 @@ class VectorStoreService:
         first = sorted_chunks[0].payload
         transcript = " ".join(r.payload.get("text", "") for r in sorted_chunks)
 
+        dur = first.get("lecture_duration")
+        if dur is None:
+            raw_dur = first.get("duration_seconds")
+            dur = round(raw_dur) if raw_dur is not None else None
         return {
             "lecture_id": lecture_id,
             "lecture_title": first.get("lecture_title", ""),
@@ -474,7 +485,7 @@ class VectorStoreService:
             "chapter_title": first.get("chapter_title", ""),
             "transcript": transcript,
             "thumbnail_url": first.get("player_embed_url", ""),
-            "duration": first.get("duration_seconds"),
+            "duration": dur,
             "lecture_order": first.get("lecture_order", 0),
         }
 
