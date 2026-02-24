@@ -20,11 +20,12 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
-    ports:
-      - "${BACKEND_PORT:-8000}:8000"
     environment:
       # Operation mode: "csv" (local, no Qdrant) or "rag" (production)
       APP_MODE: ${APP_MODE:-rag}
+
+      # Groq LLM API key — required for chat responses              # ← set in Coolify
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
 
       # CSV fallback (only used when APP_MODE=csv)
       CSV_PATH: ${CSV_PATH:-../sql_full.csv}
@@ -67,8 +68,6 @@ services:
         # Example: https://api.chatbuddy.codebasics.io/api              # ← set in Coolify
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api}
     restart: unless-stopped
-    ports:
-      - "${FRONTEND_PORT:-3000}:3000"
     depends_on:
       backend:
         condition: service_healthy
