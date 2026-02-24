@@ -1,7 +1,11 @@
+import os
+import logging
 import pandas as pd
 import re
 from typing import Dict, List
 from collections import defaultdict
+
+logger = logging.getLogger(__name__)
 
 def normalize_vtt_transcript(transcript: str) -> str:
     """
@@ -56,9 +60,25 @@ class CSVDataSource:
         self._load_and_parse()
     
     def _load_and_parse(self):
-        """Load CSV and build data structures."""
+        """Load CSV and build data structures.
+
+        In RAG mode the CSV file may not be present inside the Docker image.
+        Rather than crashing on startup, log a warning and leave the data
+        structures empty — the RAG pipeline (Qdrant) will serve all requests.
+        """
+        if not os.path.exists(self.csv_path):
+            logger.warning(
+                f"CSV file not found at '{self.csv_path}' — "
+                "running without CSV data source (expected in RAG mode)."
+            )
+            return
+
         # Read CSV
-        self.df = pd.read_csv(self.csv_path, encoding='utf-8-sig')
+        try:
+            self.df = pd.read_csv(self.csv_path, encoding='utf-8-sig')
+        except Exception as exc:
+            logger.warning(f"Failed to read CSV from '{self.csv_path}': {exc} — continuing without CSV data.")
+            return
 
         # Build lecture lookup and course structure
         # Use a normalized (lowercased) chapter key to merge case-variant duplicates
