@@ -19,6 +19,7 @@ backend.log
 test_*.py
 check_*.py
 *.txt
+!requirements.txt
 
 # IDE
 .vscode/
