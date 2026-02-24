@@ -17,7 +17,6 @@ The assistant is personified as **Peter Pandey** — a friendly, relatable instr
 | 🎯 **Lecture-scoped RAG** | Answers are grounded strictly in the lecture transcript. Peter won't hallucinate or answer from the wrong lecture. |
 | 🧠 **Dual Teaching Modes** | **Smart Friend** (Socratic, guided hints) or **Direct** (concise, opinionated answers). Student picks once, preference saved. |
 | 🌐 **English + Hinglish** | Fully supports casual Hinglish (Hindi-English mix) — the natural language of Indian developers. |
-| 📸 **Screenshot Analysis** | Students paste a screenshot of code, an error, or a chart and Peter analyzes it in context of the lecture. |
 | ⚡ **Streaming Responses** | Server-Sent Events (SSE) deliver responses token-by-token, just like ChatGPT. No waiting for the full answer. |
 | 🔗 **Cross-lecture References** | When Peter references a previous lecture, clickable reference chips appear so students can jump directly there. |
 | 🔌 **Embeddable iframe Widget** | Drop one `<iframe>` line into any webpage to add the assistant to an external course player or LMS. |
@@ -29,22 +28,16 @@ The assistant is personified as **Peter Pandey** — a friendly, relatable instr
 
 ## 👥 Who Uses This
 
-Chat Buddy is built for **both** enrolled and non-enrolled Codebasics learners.
+Chat Buddy is built exclusively for **enrolled Codebasics learners** — students who have purchased a bootcamp or course.
 
-### 🎓 Bootcamp Users (Enrolled Students)
-Students taking structured paid bootcamps (Data Analytics, ML, Python, Power BI, SQL, etc.):
-- Want fast answers during a lecture without pausing to Google
+### 🎓 Enrolled Students
+Students taking structured bootcamps (Data Analytics, ML, Python, Power BI, SQL, etc.):
+- Want fast, accurate answers during a lecture without pausing to Google
 - Learning at varying paces — some need Socratic guidance, others just want the direct answer
 - Many are Indian professionals who naturally communicate in Hinglish
 - Need the assistant to stay strictly on-topic — they're paying for course content, not generic ChatGPT answers
 
-### 🆓 Non-Bootcamp Users (Free / Trial Learners)
-Users exploring Codebasics free content or previewing a course before purchasing:
-- Same core need: instant contextual answers without leaving the video
-- Lower commitment threshold — first impression matters more here
-- Chat Buddy serves as a product differentiator that nudges them toward enrollment
-
-### Common Use Cases (Both Segments)
+### Common Use Cases
 - *"What does this line of code actually do?"*
 - *"Why is my output different from the instructor's?"*
 - *"I missed the explanation at 12:30 — what was that concept?"*
@@ -105,7 +98,6 @@ Users exploring Codebasics free content or previewing a course before purchasing
 | **Frontend** | Next.js 16.1 (App Router), React 19, TypeScript 5, Tailwind CSS 4 |
 | **Backend** | FastAPI 0.109, Python 3.9+, Uvicorn |
 | **LLM** | Groq API — llama-3.3-70b-versatile (primary), automatic model fallback chain |
-| **Vision LLM** | Groq — llama-4-scout-17b (screenshot analysis) |
 | **Vector DB** | Qdrant Cloud |
 | **Embeddings** | `sentence-transformers` — all-MiniLM-L6-v2 (384-dimensional) |
 | **Streaming** | Server-Sent Events (SSE) via FastAPI `StreamingResponse` |
@@ -359,7 +351,7 @@ CB-Chat-Buddy/
 │   │   ├── error.tsx                # Branded error boundary page
 │   │   └── not-found.tsx            # Branded 404 page
 │   ├── components/
-│   │   └── ChatPanel.tsx            # Main chat UI (streaming, modes, voice, screenshots)
+│   │   └── ChatPanel.tsx            # Main chat UI (streaming, modes, voice input)
 │   ├── lib/
 │   │   ├── api.ts                   # Backend API client (with AbortController timeouts)
 │   │   └── storage.ts               # localStorage / sessionStorage helpers
@@ -379,8 +371,6 @@ CB-Chat-Buddy/
 | **Primary** | `llama-3.3-70b-versatile` | Best persona adherence, Hinglish, reasoning |
 | **Fallback 1** | `llama-3.1-8b-instant` | Fast fallback during 70b rate limits |
 | **Fallback 2** | `gemma2-9b-it` | Final fallback |
-| **Vision** | `meta-llama/llama-4-scout-17b-16e-instruct` | Screenshot / image analysis |
-| **Vision fallback** | `meta-llama/llama-4-maverick-17b-128e-instruct` | Vision fallback |
 
 > **Why 70b matters as primary:** Smaller models (8b) cannot reliably follow the complex Peter Pandey system prompt. They break character, skip Socratic questioning, and revert to generic responses. The persona and teaching quality critically depend on the 70b model.
 
@@ -420,13 +410,11 @@ NEXT_PUBLIC_API_URL = https://your-backend-domain.com/api
 | **Groq API key** | Each user supplies their own free Groq key in the chat UI. There is **no server-side LLM key** — this means zero per-query LLM cost for Codebasics. |
 | **Rate limits** | Groq's free tier has per-minute and daily token limits. Peter handles this gracefully with a clear user message and Discord CTA. |
 | **Scope enforcement** | Peter only answers from lecture transcript content. General programming questions outside the transcript are redirected to Discord. |
-| **Screenshot analysis** | Vision model requires separate Groq quota. Gracefully skipped if unavailable. |
 | **RAG vs CSV mode** | `APP_MODE=csv` uses BM25 keyword search — lower quality. For production, always use `APP_MODE=rag` with Qdrant. |
 | **Embedding model** | `all-MiniLM-L6-v2` is ~90 MB and downloaded on first run. Subsequent starts load from cache. |
 | **Data privacy** | Question content is never logged — only `correlation_id` + `lecture_id`. Groq API keys are stored only in the user's browser `localStorage`, never on the server. |
 | **CORS** | In production, explicitly set `ALLOWED_ORIGINS`. The default (`http://localhost:3000`) will block all production requests. |
 | **History cap** | Chat history sent to the LLM is capped at 50 messages to prevent token overflow. |
-| **Image upload cap** | Screenshot uploads are limited to 5 MB. |
 
 ---
 
