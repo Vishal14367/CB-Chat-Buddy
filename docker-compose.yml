@@ -1,0 +1,76 @@
+# ── Codebasics Chat Buddy — Docker Compose ────────────────────────────────────
+#
+# Two services: backend (FastAPI) + frontend (Next.js)
+#
+# LOCAL DEVELOPMENT:
+#   1. Copy backend/.env.example → backend/.env and fill in your values
+#   2. Set NEXT_PUBLIC_API_URL in the environment section below (or export it)
+#   3. docker compose up --build
+#
+# COOLIFY DEPLOYMENT:
+#   - Select this file as the Docker Compose location
+#   - Set all variables marked "# ← set in Coolify" via the Environment Variables UI
+#   - Coolify manages domains, SSL, and reverse proxy automatically
+
+services:
+
+  # ── Backend: FastAPI + RAG pipeline ─────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    environment:
+      # Operation mode: "csv" (local, no Qdrant) or "rag" (production)
+      APP_MODE: ${APP_MODE:-rag}
+
+      # CSV fallback (only used when APP_MODE=csv)
+      CSV_PATH: ${CSV_PATH:-../sql_full.csv}
+
+      # CORS — must include your frontend's public URL in production  # ← set in Coolify
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000}
+
+      # Discord CTA link shown in off-topic / unanswerable answers
+      DISCORD_URL: ${DISCORD_URL:-https://discord.gg/codebasics}
+
+      # Embedding model name (leave as default unless you want a different model)
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
+
+      # Qdrant Cloud — required when APP_MODE=rag              # ← set in Coolify
+      QDRANT_URL: ${QDRANT_URL:-}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      COLLECTION_NAME: ${COLLECTION_NAME:-course_transcripts}
+
+      # MySQL — only needed for running ingestion scripts    # ← set in Coolify
+      DB_HOST: ${DB_HOST:-}
+      DB_PORT: ${DB_PORT:-3306}
+      DB_NAME: ${DB_NAME:-}
+      DB_USER: ${DB_USER:-}
+      DB_PASSWORD: ${DB_PASSWORD:-}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
+
+  # ── Frontend: Next.js ────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # IMPORTANT: Set this to your backend's PUBLIC URL (the one the browser calls).
+        # In Coolify this is the domain you assign to the backend service.
+        # Example: https://api.chatbuddy.codebasics.io/api              # ← set in Coolify
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api}
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production

@@ -1,0 +1,29 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Environment (never bake secrets into the image)
+.env
+*.env
+
+# Logs
+*.log
+backend.log
+
+# Dev / test files
+test_*.py
+check_*.py
+*.txt
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
