@@ -1,3 +1,4 @@
+import json
 import os
 import logging
 import pandas as pd
@@ -8,6 +9,10 @@ from collections import defaultdict
 from app.config.course_catalog import get_chapter_override
 
 logger = logging.getLogger(__name__)
+
+# Path to pre-built metadata JSON (committed to git, used in Docker/RAG mode
+# when the full CSV is not available).  345 KB vs 99 MB for the full CSV.
+_METADATA_JSON = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'course_metadata.json')
 
 
 def _normalize_ch_key(title: str) -> str:
@@ -86,18 +91,62 @@ class CSVDataSource:
         self.course_structure: Dict[str, Dict] = {}
         self._load_and_parse()
     
+    def _load_from_metadata_json(self) -> bool:
+        """Load course structure from the lightweight metadata JSON.
+
+        Returns True if the JSON was loaded successfully.  The JSON contains
+        course / chapter / lecture metadata (titles, durations, IDs) but NO
+        transcripts — enough for the course-browsing API, while Qdrant handles
+        chat / RAG queries.
+        """
+        if not os.path.exists(_METADATA_JSON):
+            return False
+
+        try:
+            with open(_METADATA_JSON, 'r', encoding='utf-8') as f:
+                metadata = json.load(f)
+        except Exception as exc:
+            logger.warning(f"Failed to read metadata JSON: {exc}")
+            return False
+
+        for course_id, cdata in metadata.items():
+            self.course_structure[course_id] = {
+                'course_id': course_id,
+                'course_title': cdata['course_title'],
+                'chapters': cdata.get('chapters', []),
+            }
+            # Also populate lectures_by_id (without transcript)
+            for ch in cdata.get('chapters', []):
+                for lec in ch.get('lectures', []):
+                    self.lectures_by_id[lec['lecture_id']] = {
+                        'lecture_id': lec['lecture_id'],
+                        'lecture_title': lec['lecture_title'],
+                        'course_title': cdata['course_title'],
+                        'chapter_title': ch['chapter_title'],
+                        'transcript': '',
+                        'thumbnail_url': '',
+                        'duration': lec.get('duration'),
+                        'lecture_order': lec.get('lecture_order', 0),
+                    }
+
+        logger.info(f"Loaded {len(self.course_structure)} courses from metadata JSON")
+        return True
+
     def _load_and_parse(self):
         """Load CSV and build data structures.
 
         In RAG mode the CSV file may not be present inside the Docker image.
-        Rather than crashing on startup, log a warning and leave the data
-        structures empty — the RAG pipeline (Qdrant) will serve all requests.
+        Fall back to the lightweight metadata JSON so course-browsing still
+        returns all 57 courses even when the full CSV is absent.
         """
         if not os.path.exists(self.csv_path):
             logger.warning(
                 f"CSV file not found at '{self.csv_path}' — "
-                "running without CSV data source (expected in RAG mode)."
+                "trying metadata JSON fallback."
             )
+            if self._load_from_metadata_json():
+                return
+            logger.warning("No metadata JSON either — running with empty data.")
             return
 
         # Read CSV

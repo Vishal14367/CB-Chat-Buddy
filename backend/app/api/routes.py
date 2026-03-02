@@ -46,11 +46,15 @@ def get_llm_service() -> GroqLLMService:
 
 @router.get("/courses", response_model=List[Course])
 async def get_courses(data: CSVDataSource = Depends(get_csv_data)):
-    """Get list of all courses. Uses Qdrant in RAG mode, CSV otherwise."""
-    if rag_pipeline and rag_pipeline.vector_store:
+    """Get list of all courses.
+
+    Always prefer CSV / metadata-JSON data (which has all 57 courses with
+    correct chapter overrides).  Fall back to Qdrant only when CSV data is
+    completely empty (should not happen in practice).
+    """
+    courses = data.get_all_courses()
+    if not courses and rag_pipeline and rag_pipeline.vector_store:
         courses = rag_pipeline.vector_store.get_all_courses()
-    else:
-        courses = data.get_all_courses()
     for course in courses:
         course["category"] = get_course_metadata(course["course_title"])
     return courses
@@ -58,22 +62,28 @@ async def get_courses(data: CSVDataSource = Depends(get_csv_data)):
 
 @router.get("/courses/{course_id}", response_model=CourseDetail)
 async def get_course_detail(course_id: str, data: CSVDataSource = Depends(get_csv_data)):
-    """Get course with chapters and lectures. Uses Qdrant in RAG mode."""
+    """Get course with chapters and lectures.
+
+    Prefer CSV / metadata-JSON (has chapter overrides applied).  Fall back to
+    Qdrant only when CSV does not have the requested course.
+    """
     if not _SAFE_ID_PATTERN.match(course_id):
         raise HTTPException(status_code=400, detail="Invalid course_id format")
+
+    # Prefer CSV / metadata source (chapter overrides applied here)
+    course = data.get_course_detail(course_id)
+    if course:
+        return course
+
+    # Fall back to Qdrant if available
     if rag_pipeline and rag_pipeline.vector_store:
-        # Qdrant stores course_title, not course_id — use cached slug resolver
         course_title = rag_pipeline.vector_store.resolve_course_title(course_id)
         if course_title:
             course = rag_pipeline.vector_store.get_course_detail(course_title)
             if course:
                 return course
-        raise HTTPException(status_code=404, detail="Course not found")
 
-    course = data.get_course_detail(course_id)
-    if not course:
-        raise HTTPException(status_code=404, detail="Course not found")
-    return course
+    raise HTTPException(status_code=404, detail="Course not found")
 
 
 @router.get("/lectures/{lecture_id}", response_model=LectureDetail)
