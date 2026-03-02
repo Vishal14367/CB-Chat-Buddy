@@ -5,7 +5,25 @@ import re
 from typing import Dict, List
 from collections import defaultdict
 
+from app.config.course_catalog import get_chapter_override
+
 logger = logging.getLogger(__name__)
+
+
+def _normalize_ch_key(title: str) -> str:
+    """Normalize chapter title for matching: lowercase, collapse whitespace,
+    and replace common Unicode variants with ASCII equivalents."""
+    key = re.sub(r'\s+', ' ', title.lower().strip())
+    # Curly single quotes → straight
+    key = key.replace('\u2018', "'").replace('\u2019', "'")
+    # Curly double quotes → straight
+    key = key.replace('\u201c', '"').replace('\u201d', '"')
+    # En/em dash → hyphen
+    key = key.replace('\u2013', '-').replace('\u2014', '-')
+    # Handle Windows-1252 artifacts that survived as latin-1 bytes
+    key = key.replace('\x92', "'").replace('\x93', '"').replace('\x94', '"')
+    key = key.replace('\x96', '-').replace('\x97', '-')
+    return key
 
 def normalize_vtt_transcript(transcript: str) -> str:
     """
@@ -49,9 +67,18 @@ def generate_lecture_id(row: pd.Series) -> str:
     return f"{course}_{chapter}_{lecture}"
 
 
+def slugify(text: str) -> str:
+    """Convert text to a URL-safe slug (lowercase, alphanumeric + hyphens only)."""
+    slug = text.lower().strip()
+    slug = re.sub(r'[^a-z0-9\s-]', '', slug)  # remove non-alphanumeric (keep spaces/hyphens)
+    slug = re.sub(r'[\s-]+', '-', slug)         # collapse whitespace/hyphens
+    slug = slug.strip('-')
+    return slug
+
+
 class CSVDataSource:
     """Loads and parses CSV file containing lecture data."""
-    
+
     def __init__(self, csv_path: str):
         self.csv_path = csv_path
         self.df = None
@@ -108,8 +135,8 @@ class CSVDataSource:
             course_title = row.get('course_title', 'Unknown Course')
             chapter_title = str(row.get('chapter_title', 'Unknown Chapter')).strip()
 
-            # Normalize chapter key for case-insensitive merge
-            ch_key = chapter_title.lower()
+            # Normalize chapter key for case/whitespace/unicode-insensitive merge
+            ch_key = _normalize_ch_key(chapter_title)
 
             # Track chapter ordering using CSV row index (which preserves the
             # intended teaching sequence). module_id is an internal DB key and
@@ -161,17 +188,47 @@ class CSVDataSource:
                 'lecture_order': per_course_order
             })
 
-        # Convert to final structure with chapters sorted by module_id
+        # Convert to final structure with chapters sorted correctly
         self.course_structure = {}
         for course_title, chapters in courses.items():
-            course_id = course_title.lower().replace(' ', '-')
+            course_id = slugify(course_title)
 
-            # Sort normalized chapter keys by their earliest row index
-            # Only include chapters that have remaining lectures after dedup
-            sorted_ch_keys = sorted(
-                [ch for ch in chapters.keys() if len(chapters[ch]) > 0],
-                key=lambda ch: chapter_first_key[course_title][ch]
-            )
+            # Check for chapter override (fixes bundled/mis-ordered content)
+            chapter_override = get_chapter_override(course_title)
+
+            if chapter_override:
+                # Use override: only include listed chapters, in specified order
+                override_keys = [_normalize_ch_key(ch) for ch in chapter_override]
+                sorted_ch_keys = [
+                    ch_key for ch_key in override_keys
+                    if ch_key in chapters and len(chapters[ch_key]) > 0
+                ]
+            else:
+                # Default: sort by earliest row index
+                sorted_ch_keys = sorted(
+                    [ch for ch in chapters.keys() if len(chapters[ch]) > 0],
+                    key=lambda ch: chapter_first_key[course_title][ch]
+                )
+
+            # Re-number lecture_order sequentially after filtering
+            if chapter_override:
+                new_order = 0
+                for ch_key in sorted_ch_keys:
+                    for lec in sorted(chapters[ch_key], key=lambda x: x['lecture_order']):
+                        lec['lecture_order'] = new_order
+                        # Also update the global lectures_by_id
+                        if lec['lecture_id'] in self.lectures_by_id:
+                            self.lectures_by_id[lec['lecture_id']]['lecture_order'] = new_order
+                        new_order += 1
+                # Remove lectures from excluded chapters from lectures_by_id
+                included_ids = set()
+                for ch_key in sorted_ch_keys:
+                    for lec in chapters[ch_key]:
+                        included_ids.add(lec['lecture_id'])
+                excluded_ch_keys = set(chapters.keys()) - set(sorted_ch_keys)
+                for ch_key in excluded_ch_keys:
+                    for lec in chapters[ch_key]:
+                        self.lectures_by_id.pop(lec['lecture_id'], None)
 
             self.course_structure[course_id] = {
                 'course_id': course_id,

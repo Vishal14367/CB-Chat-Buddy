@@ -22,6 +22,7 @@ class Course(BaseModel):
     course_title: str
     chapter_count: Optional[int] = None
     lecture_count: Optional[int] = None
+    category: Optional[str] = None
 
 class CourseDetail(Course):
     chapters: List[Chapter]

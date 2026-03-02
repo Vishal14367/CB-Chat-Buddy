@@ -22,6 +22,7 @@ export interface Course {
   course_title: string;
   chapter_count?: number;
   lecture_count?: number;
+  category?: string;
 }
 
 export interface CourseDetail extends Course {

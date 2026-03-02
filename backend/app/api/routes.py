@@ -13,6 +13,7 @@ from app.models.schemas import (
 from app.utils.csv_parser import CSVDataSource
 from app.services.retrieval import LectureRetriever
 from app.services.llm import GroqLLMService
+from app.config.course_catalog import get_course_metadata
 from typing import List, Optional
 import os
 
@@ -47,8 +48,12 @@ def get_llm_service() -> GroqLLMService:
 async def get_courses(data: CSVDataSource = Depends(get_csv_data)):
     """Get list of all courses. Uses Qdrant in RAG mode, CSV otherwise."""
     if rag_pipeline and rag_pipeline.vector_store:
-        return rag_pipeline.vector_store.get_all_courses()
-    return data.get_all_courses()
+        courses = rag_pipeline.vector_store.get_all_courses()
+    else:
+        courses = data.get_all_courses()
+    for course in courses:
+        course["category"] = get_course_metadata(course["course_title"])
+    return courses
 
 
 @router.get("/courses/{course_id}", response_model=CourseDetail)
@@ -182,15 +187,12 @@ def get_rag_pipeline():
 
 @router.post("/v2/chat/stream")
 async def chat_v2_stream(request: RAGChatRequest):
-    """SSE streaming version of RAG chat."""
-    pipeline = get_rag_pipeline()
-
+    """SSE streaming version of chat. Uses RAG pipeline when available, falls back to CSV."""
     history = [{"role": msg.role, "content": msg.content} for msg in request.history]
 
-    # Resolve chapter/lecture titles for query enrichment (helps embedding model)
+    # Resolve chapter/lecture titles
     chapter_title = ""
     lecture_title = ""
-    # Try CSV first (fast, in-memory), then fall back to Qdrant
     lecture_detail = None
     if csv_data:
         lecture_detail = csv_data.get_lecture_detail(request.lectureId)
@@ -212,36 +214,88 @@ async def chat_v2_stream(request: RAGChatRequest):
         except Exception as e:
             image_context = f"(Screenshot analysis failed: {str(e)[:100]})"
 
-    async def event_generator():
+    # --- RAG mode: use full pipeline ---
+    if rag_pipeline is not None:
+        async def rag_event_generator():
+            try:
+                async for event in rag_pipeline.process_question_stream(
+                    question=request.message,
+                    course_title=request.courseTitle,
+                    current_lecture_order=request.currentLectureOrder,
+                    lecture_id=request.lectureId,
+                    api_key=request.apiKey,
+                    history=history,
+                    chapter_title=chapter_title,
+                    lecture_title=lecture_title,
+                    teaching_mode=request.teachingMode or "fix",
+                    response_style=request.responseStyle or "casual",
+                    hint_stage=request.hintStage or 1,
+                    image_context=image_context
+                ):
+                    yield event
+            except Exception as e:
+                logger.error(f"SSE stream error: {e}")
+                yield f"data: {json.dumps({'type': 'error', 'content': 'An error occurred. Please try again.'})}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'references': [], 'responseType': 'error'})}\n\n"
+
+        return StreamingResponse(
+            rag_event_generator(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"}
+        )
+
+    # --- CSV fallback: stream from single-lecture transcript ---
+    if not lecture_detail:
+        raise HTTPException(status_code=404, detail="Lecture not found")
+
+    transcript = lecture_detail.get('transcript', '')
+    if not transcript:
+        raise HTTPException(status_code=400, detail="Transcript not available for this lecture")
+
+    retriever = LectureRetriever(transcript, chunk_size=300, threshold=0.0)
+    chunks, _ = retriever.retrieve(request.message, top_k=3)
+    context_string = "\n\n".join(chunks) if chunks else ""
+
+    async def csv_event_generator():
         try:
-            async for event in pipeline.process_question_stream(
-                question=request.message,
-                course_title=request.courseTitle,
-                current_lecture_order=request.currentLectureOrder,
-                lecture_id=request.lectureId,
+            if not chunks:
+                msg = "I don't see that topic covered in this particular lecture. It might come up in the next one — keep going!"
+                yield f"data: {json.dumps({'type': 'token', 'content': msg})}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'references': [], 'responseType': 'out_of_scope'})}\n\n"
+                return
+
+            async for token in llm_service.generate_response_stream(
                 api_key=request.apiKey,
+                query=request.message,
+                context_string=context_string,
+                course_title=lecture_detail.get('course_title', 'this course'),
+                chapter_title=chapter_title or 'this chapter',
+                lecture_title=lecture_title or 'this lecture',
                 history=history,
-                chapter_title=chapter_title,
-                lecture_title=lecture_title,
                 teaching_mode=request.teachingMode or "fix",
                 response_style=request.responseStyle or "casual",
                 hint_stage=request.hintStage or 1,
-                image_context=image_context
             ):
-                yield event
+                yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
+
+            yield f"data: {json.dumps({'type': 'done', 'references': [], 'responseType': 'in_scope'})}\n\n"
         except Exception as e:
-            logger.error(f"SSE stream error: {e}")
-            yield f"data: {json.dumps({'type': 'error', 'content': 'An error occurred. Please try again.'})}\n\n"
-            yield f"data: {json.dumps({'type': 'done', 'references': [], 'responseType': 'error'})}\n\n"
+            logger.error(f"CSV stream error: {e}")
+            error_msg = str(e)
+            if "rate limit" in error_msg.lower() or "429" in error_msg:
+                yield f"data: {json.dumps({'type': 'error', 'content': 'Rate limit hit. Wait about 60 seconds and try again.'})}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'references': [], 'responseType': 'rate_limited'})}\n\n"
+            elif "invalid api key" in error_msg.lower() or "401" in error_msg:
+                yield f"data: {json.dumps({'type': 'error', 'content': 'Invalid API key. Please update it in Settings.'})}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'references': [], 'responseType': 'error'})}\n\n"
+            else:
+                yield f"data: {json.dumps({'type': 'error', 'content': 'An error occurred. Please try again.'})}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'references': [], 'responseType': 'error'})}\n\n"
 
     return StreamingResponse(
-        event_generator(),
+        csv_event_generator(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"
-        }
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"}
     )
 
 
