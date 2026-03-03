@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -268,6 +269,9 @@ async def chat_v2_stream(request: RAGChatRequest):
 
     async def csv_event_generator():
         try:
+            # Natural typing delay (same as RAG path)
+            await asyncio.sleep(2 + (hash(request.message) % 1000) / 1000)
+
             if not chunks:
                 msg = "I don't see that topic covered in this particular lecture. It might come up in the next one — keep going!"
                 yield f"data: {json.dumps({'type': 'token', 'content': msg})}\n\n"

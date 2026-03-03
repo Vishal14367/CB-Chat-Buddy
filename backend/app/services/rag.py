@@ -4,6 +4,7 @@ Coordinates embedding, vector search, context classification,
 LLM generation, and response post-processing.
 """
 
+import asyncio
 import json
 import logging
 import uuid
@@ -286,6 +287,10 @@ class RAGPipeline:
         - {"type": "token", "content": "..."} for each token
         - {"type": "done", "references": [...], "responseType": "..."} at end
         """
+        # Natural typing delay: pause 2-3s before first token so the bot
+        # feels like it's "thinking" rather than replying instantly.
+        await asyncio.sleep(2 + (hash(question) % 1000) / 1000)  # 2.0-2.999s
+
         # Step 1: Enrich query with lecture context for better semantic matching
         enriched_query = question
         if chapter_title and lecture_title:
