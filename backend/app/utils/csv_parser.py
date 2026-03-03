@@ -6,7 +6,7 @@ import re
 from typing import Dict, List
 from collections import defaultdict
 
-from app.config.course_catalog import get_chapter_override
+from app.config.course_catalog import get_chapter_override, get_chapter_merges
 
 logger = logging.getLogger(__name__)
 
@@ -236,6 +236,37 @@ class CSVDataSource:
                 'duration': lecture_data['duration'],
                 'lecture_order': per_course_order
             })
+
+        # Apply chapter merges (fold sub-chapters into parents) before
+        # building the final structure.  Must happen before overrides.
+        for course_title in list(courses.keys()):
+            merges = get_chapter_merges(course_title)
+            if not merges:
+                continue
+            for source_name, target_name in merges.items():
+                source_key = _normalize_ch_key(source_name)
+                target_key = _normalize_ch_key(target_name)
+                if source_key not in courses[course_title]:
+                    continue  # source chapter not in data
+                source_lectures = courses[course_title].pop(source_key)
+                if target_key in courses[course_title]:
+                    # Merge into existing target
+                    courses[course_title][target_key].extend(source_lectures)
+                else:
+                    # Rename: create target with source's lectures
+                    courses[course_title][target_key] = source_lectures
+                    chapter_display_title[course_title][target_key] = target_name
+                # Update first-key tracking (use earliest row)
+                src_first = chapter_first_key[course_title].get(source_key, float('inf'))
+                tgt_first = chapter_first_key[course_title].get(target_key, float('inf'))
+                chapter_first_key[course_title][target_key] = min(src_first, tgt_first)
+                chapter_first_key[course_title].pop(source_key, None)
+                # Update chapter_title in lectures_by_id for moved lectures
+                display = chapter_display_title[course_title].get(target_key, target_name)
+                for lec in source_lectures:
+                    lid = lec['lecture_id']
+                    if lid in self.lectures_by_id:
+                        self.lectures_by_id[lid]['chapter_title'] = display
 
         # Convert to final structure with chapters sorted correctly
         self.course_structure = {}

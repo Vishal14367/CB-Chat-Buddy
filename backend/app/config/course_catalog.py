@@ -6,7 +6,7 @@ Track assignments (DA / DS / DE) are NOT included here — they will be
 handled separately during data embedding.
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 # ---- Category constants ----
 DATA_ANALYTICS = "Data & Analytics"
@@ -290,11 +290,8 @@ CHAPTER_OVERRIDES: Dict[str, List[str]] = {
         "Final Quiz",
         "Gen AI Interview Question Bank",
         "Enterprise Cloud Agent Development: Amazon Bedrock AgentCore",
-        "Amazon AgentCore Project",
         "Building Stateful AI Agents with LangGraph",
-        "Introduction To Langgraph",
         "Autonomous Multi-Agent Systems : CrewAI",
-        "Introduction To CrewAI",
         "Bonus: Transformer Architecture",
     ],
     "Virtual Internship 2": [
@@ -403,6 +400,27 @@ CHAPTER_OVERRIDES: Dict[str, List[str]] = {
 def get_chapter_override(course_title: str) -> Optional[List[str]]:
     """Return the correct chapter order for a course, or None if no override."""
     return CHAPTER_OVERRIDES.get(course_title)
+
+
+# ---- Chapter merges: sub-chapters that should be folded into a parent ----
+# Maps course_title -> {source_chapter: target_chapter}
+# Source lectures are merged into target. If target doesn't exist in the DB,
+# source is effectively renamed to target.
+CHAPTER_MERGES: Dict[str, Dict[str, str]] = {
+    "Gen AI to Agentic AI with Business Projects": {
+        "Amazon AgentCore Project": "Enterprise Cloud Agent Development: Amazon Bedrock AgentCore",
+        "Introduction To Langgraph": "Building Stateful AI Agents with LangGraph",
+        "Introduction To CrewAI": "Autonomous Multi-Agent Systems : CrewAI",
+    },
+    "Virtual Internship": {
+        "Week1": "Week 1",
+    },
+}
+
+
+def get_chapter_merges(course_title: str) -> Optional[Dict[str, str]]:
+    """Return chapter merge rules for a course, or None."""
+    return CHAPTER_MERGES.get(course_title)
 
 
 # ---- Keyword fallback for courses not in the catalog ----
