@@ -295,7 +295,8 @@ CHAPTER_OVERRIDES: Dict[str, List[str]] = {
         "Bonus: Transformer Architecture",
     ],
     "Virtual Internship 2": [
-        "Week 5",
+        "Week 3 & 4",           # DA track
+        "Week 5",               # DS track
         "Week 6",
         "Week 7",
         "Week 8",

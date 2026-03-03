@@ -9461,6 +9461,18 @@
     "course_title": "Virtual Internship 2",
     "chapters": [
       {
+        "chapter_title": "Week 3 & 4",
+        "lectures": [
+          {
+            "lecture_id": "1458",
+            "lecture_title": "End Note",
+            "thumbnail_url": "https://player.vimeo.com/video/1044596554?badge=0",
+            "duration": 87,
+            "lecture_order": 0
+          }
+        ]
+      },
+      {
         "chapter_title": "Week 5",
         "lectures": [
           {
@@ -9468,7 +9480,7 @@
             "lecture_title": "DL Project For Our Logistics Client from California",
             "thumbnail_url": "https://player.vimeo.com/video/1047001099?badge=0",
             "duration": 182,
-            "lecture_order": 0
+            "lecture_order": 1
           }
         ]
       },
@@ -9480,7 +9492,7 @@
             "lecture_title": "Can We Try an Alternative approach",
             "thumbnail_url": "https://player.vimeo.com/video/1047001242?badge=0",
             "duration": 91,
-            "lecture_order": 1
+            "lecture_order": 2
           }
         ]
       },
@@ -9492,7 +9504,7 @@
             "lecture_title": "Business Context",
             "thumbnail_url": "https://player.vimeo.com/video/1047001285?badge=0",
             "duration": 206,
-            "lecture_order": 2
+            "lecture_order": 3
           }
         ]
       },
@@ -9504,14 +9516,14 @@
             "lecture_title": "Create a Streamlit UI",
             "thumbnail_url": "https://player.vimeo.com/video/1047001375?badge=0",
             "duration": 102,
-            "lecture_order": 3
+            "lecture_order": 4
           },
           {
             "lecture_id": "1463",
             "lecture_title": "End Note",
             "thumbnail_url": "https://player.vimeo.com/video/1047001350?badge=0",
             "duration": 77,
-            "lecture_order": 4
+            "lecture_order": 5
           }
         ]
       }

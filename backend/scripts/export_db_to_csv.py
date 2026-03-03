@@ -89,36 +89,59 @@ def get_db_connection():
         password=os.getenv('DB_PASSWORD', ''),
         database=os.getenv('DB_NAME', ''),
         charset='utf8mb4',
-        cursorclass=pymysql.cursors.DictCursor
+        cursorclass=pymysql.cursors.DictCursor,
+        read_timeout=120,
+        write_timeout=60,
     )
 
 
 def export_courses(course_titles: list, output_csv: str):
-    """Export course data from MySQL to CSV."""
-    conn = get_db_connection()
-    print(f"Connected to database: {os.getenv('DB_NAME')}")
+    """Export course data from MySQL to CSV.
+
+    Opens a fresh connection per course to avoid read-replica timeouts
+    on large transcript payloads.
+    """
+    import time
+
+    print(f"Target database: {os.getenv('DB_NAME')}")
 
     all_rows = []
     found_courses = []
     missing_courses = []
 
-    with conn.cursor() as cursor:
-        for title in course_titles:
-            cursor.execute(
-                "SELECT * FROM video_data WHERE course_title = %s ORDER BY id ASC",
-                (title,)
-            )
-            rows = cursor.fetchall()
+    for idx, title in enumerate(course_titles):
+        retries = 3
+        for attempt in range(1, retries + 1):
+            try:
+                conn = get_db_connection()
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        "SELECT * FROM video_data WHERE course_title = %s ORDER BY id ASC",
+                        (title,)
+                    )
+                    rows = cursor.fetchall()
+                conn.close()
 
-            if rows:
-                all_rows.extend(rows)
-                found_courses.append((title, len(rows)))
-                print(f"  [OK] {title}: {len(rows)} lectures")
-            else:
-                missing_courses.append(title)
-                print(f"  [MISSING] {title}: 0 lectures")
+                if rows:
+                    all_rows.extend(rows)
+                    found_courses.append((title, len(rows)))
+                    print(f"  [OK] {title}: {len(rows)} lectures")
+                else:
+                    missing_courses.append(title)
+                    print(f"  [MISSING] {title}: 0 lectures")
+                break  # success
+            except Exception as exc:
+                if attempt < retries:
+                    wait = attempt * 3
+                    print(f"  [RETRY {attempt}/{retries}] {title}: {exc} — waiting {wait}s")
+                    time.sleep(wait)
+                else:
+                    print(f"  [FAIL] {title}: {exc}")
+                    missing_courses.append(title)
 
-    conn.close()
+        # small pause between courses to avoid connection storms
+        if idx < len(course_titles) - 1:
+            time.sleep(0.5)
 
     # Summary
     print(f"\n{'=' * 60}")
