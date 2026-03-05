@@ -30,6 +30,7 @@ class CourseDetail(Course):
 class ChatMessage(BaseModel):
     role: str  # "user" or "assistant"
     content: str
+    responseType: Optional[str] = None  # "in_scope", "off_topic", "covered_elsewhere", etc.
 
 class ChatRequest(BaseModel):
     apiKey: str

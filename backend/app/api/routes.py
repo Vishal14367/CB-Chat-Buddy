@@ -152,7 +152,10 @@ async def chat(
     
     # Generate response using Groq
     try:
-        history = [{"role": msg.role, "content": msg.content} for msg in request.history]
+        history = [
+        {"role": msg.role, "content": msg.content, "responseType": msg.responseType}
+        for msg in request.history
+    ]
         response_text = service.generate_response(
             api_key=request.apiKey,
             query=request.message,
@@ -199,7 +202,10 @@ def get_rag_pipeline():
 @router.post("/v2/chat/stream")
 async def chat_v2_stream(request: RAGChatRequest):
     """SSE streaming version of chat. Uses RAG pipeline when available, falls back to CSV."""
-    history = [{"role": msg.role, "content": msg.content} for msg in request.history]
+    history = [
+        {"role": msg.role, "content": msg.content, "responseType": msg.responseType}
+        for msg in request.history
+    ]
 
     # Resolve chapter/lecture titles
     chapter_title = ""

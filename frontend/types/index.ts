@@ -32,6 +32,7 @@ export interface CourseDetail extends Course {
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+  responseType?: string;
 }
 
 export interface ChatRequest {

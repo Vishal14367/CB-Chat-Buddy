@@ -7,6 +7,7 @@ LLM generation, and response post-processing.
 import asyncio
 import json
 import logging
+import re
 import uuid
 from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any, AsyncGenerator
@@ -24,6 +25,38 @@ logger = logging.getLogger(__name__)
 RELEVANCE_THRESHOLD = 0.35      # Below this = not relevant
 HIGH_RELEVANCE_THRESHOLD = 0.7  # Above this = use fewer chunks (save tokens)
 CURRENT_LECTURE_MIN_SCORE = 0.30  # Below this for current lecture = topic not covered here
+REPHRASE_SIMILARITY_THRESHOLD = 0.6  # Above this = user is rephrasing a redirected question
+
+# Response types that indicate a redirect
+REDIRECT_RESPONSE_TYPES = {"off_topic", "covered_elsewhere", "future_topic", "blocked"}
+
+# SQL injection patterns — always blocked (never appropriate in a learning chatbot)
+_SQL_INJECTION_PATTERNS = re.compile(
+    r"(?i)"
+    r"(;\s*(DROP|DELETE|TRUNCATE|ALTER|INSERT|UPDATE|EXEC)\b)"
+    r"|(\bUNION\s+(ALL\s+)?SELECT\b)"
+    r"|('+\s*(OR|AND)\s+['\d].*=)"
+    r"|(\bEXEC\s*\()"
+    r"|(xp_cmdshell)"
+    r"|(INFORMATION_SCHEMA)"
+    r"|(\bSLEEP\s*\()"
+    r"|(\bBENCHMARK\s*\()"
+)
+
+# Dangerous patterns in LLM output — triggers safety disclaimer
+_DANGEROUS_OUTPUT_PATTERNS = re.compile(
+    r"(?i)"
+    r"(DROP\s+(TABLE|DATABASE|INDEX|VIEW|SCHEMA)\s+\w+)"
+    r"|(TRUNCATE\s+TABLE\s+\w+)"
+    r"|(DELETE\s+FROM\s+\w+\s*;)"
+    r"|(ALTER\s+TABLE\s+\w+\s+DROP\b)"
+)
+
+_SAFETY_DISCLAIMER = (
+    "\n\n**Safety Note:** The SQL above includes destructive operations. "
+    "Always test on a backup or staging environment first. "
+    "Never run DROP, DELETE, or TRUNCATE on production data without a verified backup."
+)
 
 
 @dataclass
@@ -88,6 +121,12 @@ class RAGPipeline:
         logger.info(
             f"[{correlation_id}] RAG request: lecture_id={lecture_id} | course={course_title}"
         )
+
+        # Step 0: Pre-filter for SQL injection patterns
+        block_message = self._check_dangerous_query(question)
+        if block_message:
+            return RAGResponse(message=block_message, response_type="blocked")
+
         # Step 1: Enrich query with lecture context for better semantic matching.
         # "What is this lecture about?" has no useful signal for the embedding model.
         # Prepending the chapter + lecture title gives it the semantic anchor it needs.
@@ -113,6 +152,12 @@ class RAGPipeline:
         # lecture prefix dominates the vector, making all questions about the
         # same lecture appear similar (>0.92 cosine), causing false cache hits.
         raw_embedding = self.embedding_service.encode(question)
+
+        # Redirect persistence — block rephrased off-topic questions
+        redirect_msg = self._is_redirect_persistence(raw_embedding, history or [])
+        if redirect_msg:
+            return RAGResponse(message=redirect_msg, response_type="off_topic")
+
         if self.cache:
             cached = self.cache.get_semantic_match(
                 raw_embedding, current_lecture_order, course_title
@@ -144,6 +189,9 @@ class RAGPipeline:
             f"[{correlation_id}] Search returned {len(chunks)} chunks | top_scores={[f'{c.score:.3f}' for c in chunks[:3]]}"
         )
 
+        # Conversation drift detection — count consecutive redirects for escalation
+        redirect_count = self._count_consecutive_redirects(history or [])
+
         # Step 4: Classify the response type (pass intent so "previous" queries aren't rejected)
         detected_intent = self._detect_intent(question)
         response_type, chunks_to_use = self._classify_results(
@@ -153,7 +201,7 @@ class RAGPipeline:
 
         if response_type == "off_topic":
             return RAGResponse(
-                message=self._off_topic_message(course_title),
+                message=self._off_topic_message(course_title, redirect_count),
                 response_type="off_topic"
             )
 
@@ -166,7 +214,7 @@ class RAGPipeline:
                     f"(Chapter: {ec.metadata.get('chapter_title', '')})"
                 )
             return RAGResponse(
-                message=self._covered_elsewhere_message(course_title, elsewhere_info),
+                message=self._covered_elsewhere_message(course_title, elsewhere_info, redirect_count),
                 response_type="covered_elsewhere"
             )
 
@@ -185,7 +233,7 @@ class RAGPipeline:
                     f"(Chapter: {fc.metadata['chapter_title']})"
                 )
             return RAGResponse(
-                message=self._future_topic_message(course_title, future_info),
+                message=self._future_topic_message(course_title, future_info, redirect_count),
                 response_type="future_topic"
             )
 
@@ -238,6 +286,11 @@ class RAGPipeline:
         response_text = self._post_process_response(
             response_text, chunks_to_use, current_lecture_order, lecture_id
         )
+
+        # Post-filter: append safety disclaimer if LLM output contains dangerous SQL
+        safety_addendum = self._post_filter_safety(response_text)
+        if safety_addendum:
+            response_text += safety_addendum
 
         result = RAGResponse(
             message=response_text,
@@ -306,6 +359,15 @@ class RAGPipeline:
         # feels like it's "thinking" rather than replying instantly.
         await asyncio.sleep(2 + (hash(question) % 1000) / 1000)  # 2.0-2.999s
 
+        correlation_id = str(uuid.uuid4())[:8]
+
+        # Step 0: Pre-filter for SQL injection patterns (block before any processing)
+        block_message = self._check_dangerous_query(question)
+        if block_message:
+            yield f"data: {json.dumps({'type': 'token', 'content': block_message})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'references': [], 'responseType': 'blocked'})}\n\n"
+            return
+
         # Step 1: Enrich query with lecture context for better semantic matching
         enriched_query = question
         if chapter_title and lecture_title:
@@ -327,6 +389,14 @@ class RAGPipeline:
         # Check semantic cache using RAW question embedding (not enriched).
         # The enriched prefix dominates the vector, causing false cache hits.
         raw_embedding = self.embedding_service.encode(question)
+
+        # Step 1.5: Redirect persistence — block rephrased off-topic questions
+        redirect_msg = self._is_redirect_persistence(raw_embedding, history or [])
+        if redirect_msg:
+            yield f"data: {json.dumps({'type': 'token', 'content': redirect_msg})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'references': [], 'responseType': 'off_topic'})}\n\n"
+            return
+
         if self.cache:
             cached = self.cache.get_semantic_match(
                 raw_embedding, current_lecture_order, course_title
@@ -363,6 +433,9 @@ class RAGPipeline:
               c.metadata.get('lecture_order')) for c in chunks[:5]]
         )
 
+        # Conversation drift detection — count consecutive redirects for escalation
+        redirect_count = self._count_consecutive_redirects(history or [])
+
         # Classify (pass intent so "previous" queries aren't rejected)
         stream_intent = self._detect_intent(question)
         response_type, chunks_to_use = self._classify_results(
@@ -371,7 +444,7 @@ class RAGPipeline:
         )
 
         if response_type == "off_topic":
-            msg = self._off_topic_message(course_title)
+            msg = self._off_topic_message(course_title, redirect_count)
             yield f"data: {json.dumps({'type': 'token', 'content': msg})}\n\n"
             yield f"data: {json.dumps({'type': 'done', 'references': [], 'responseType': 'off_topic'})}\n\n"
             return
@@ -384,7 +457,7 @@ class RAGPipeline:
                     f" in **{ec.metadata.get('lecture_title', '')}** "
                     f"(Chapter: {ec.metadata.get('chapter_title', '')})"
                 )
-            msg = self._covered_elsewhere_message(course_title, elsewhere_info)
+            msg = self._covered_elsewhere_message(course_title, elsewhere_info, redirect_count)
             yield f"data: {json.dumps({'type': 'token', 'content': msg})}\n\n"
             yield f"data: {json.dumps({'type': 'done', 'references': [], 'responseType': 'covered_elsewhere'})}\n\n"
             return
@@ -402,7 +475,7 @@ class RAGPipeline:
                     f" in **{fc.metadata['lecture_title']}** "
                     f"(Chapter: {fc.metadata['chapter_title']})"
                 )
-            msg = self._future_topic_message(course_title, future_info)
+            msg = self._future_topic_message(course_title, future_info, redirect_count)
             yield f"data: {json.dumps({'type': 'token', 'content': msg})}\n\n"
             yield f"data: {json.dumps({'type': 'done', 'references': [], 'responseType': 'future_topic'})}\n\n"
             return
@@ -466,6 +539,12 @@ class RAGPipeline:
                 yield f"data: {json.dumps({'type': 'error', 'content': 'An error occurred while generating the response. Please try again.'})}\n\n"
                 yield f"data: {json.dumps({'type': 'done', 'references': [], 'responseType': 'error'})}\n\n"
                 return
+
+        # Post-filter: append safety disclaimer if LLM output contains dangerous SQL
+        safety_addendum = self._post_filter_safety(full_response)
+        if safety_addendum:
+            full_response += safety_addendum
+            yield f"data: {json.dumps({'type': 'token', 'content': safety_addendum})}\n\n"
 
         # Send done event with references
         refs = [
@@ -745,16 +824,33 @@ class RAGPipeline:
             pass
         return 0
 
-    def _off_topic_message(self, course_title: str) -> str:
-        """Generate a friendly off-topic response."""
+    def _off_topic_message(self, course_title: str, redirect_count: int = 0) -> str:
+        """Generate a friendly off-topic response with escalating firmness."""
+        if redirect_count >= 3:
+            return (
+                f"I can only help with {course_title} content, specifically the current lecture. "
+                f"Every off-topic question uses your limited tokens without adding value. "
+                f"What from the current lecture can I help you with?"
+            )
+        if redirect_count >= 1:
+            return (
+                f"This one's still outside my scope! I'm here for {course_title} "
+                f"and the current lecture only. Let's make your tokens count. "
+                f"What from the current lecture can I help with?"
+            )
         return (
             f"Hmm, that's actually outside what I can help with. "
             f"I'm here specifically for the {course_title} course. "
             f"But hey, any doubts on the current lecture I can help you nail!"
         )
 
-    def _future_topic_message(self, course_title: str, future_info: str) -> str:
-        """Generate a friendly future-topic response."""
+    def _future_topic_message(self, course_title: str, future_info: str, redirect_count: int = 0) -> str:
+        """Generate a friendly future-topic response with escalating firmness."""
+        if redirect_count >= 3:
+            return (
+                f"That topic is coming up later{future_info}. "
+                f"Your tokens are limited, let's focus on the current lecture."
+            )
         return (
             f"Good question! That topic is actually coming up later in the course"
             f"{future_info}. "
@@ -762,13 +858,138 @@ class RAGPipeline:
             f"Anything about the current lecture I can help with?"
         )
 
-    def _covered_elsewhere_message(self, course_title: str, elsewhere_info: str) -> str:
-        """Generate a friendly redirect when topic is covered in a different lecture."""
+    def _covered_elsewhere_message(self, course_title: str, elsewhere_info: str, redirect_count: int = 0) -> str:
+        """Generate a friendly redirect with escalating firmness."""
+        if redirect_count >= 3:
+            return (
+                f"That's covered{elsewhere_info}, not here. "
+                f"Your tokens are limited, let's focus on the current lecture."
+            )
+        if redirect_count >= 1:
+            return (
+                f"That topic is still outside the current lecture{elsewhere_info}. "
+                f"Let's make your tokens count on what we're learning right now!"
+            )
         return (
             f"That's actually covered{elsewhere_info}, not in the current lecture. "
             f"Let's save your tokens for what we're learning right now! "
             f"Any doubts on the current lecture I can help with?"
         )
+
+    # ---- Guardrail Methods ----
+
+    @staticmethod
+    def _check_dangerous_query(question: str) -> Optional[str]:
+        """Pre-filter for SQL injection patterns. Always blocks.
+
+        Returns a block message if the query contains SQL injection attempts.
+        Returns None if the query is safe to proceed.
+
+        Design: Only blocks TRUE injection patterns (chained SQL commands,
+        UNION SELECT, tautology attacks). Does NOT block educational questions
+        ABOUT destructive SQL (e.g. "what does DROP TABLE do?") — those are
+        handled by the system prompt + post-filter instead.
+        """
+        if _SQL_INJECTION_PATTERNS.search(question):
+            return (
+                "Whoa, that looks like it could be a SQL injection pattern! "
+                "I can't help with queries like that. "
+                "If you're curious about SQL security, check out the security-related "
+                "lectures in your course. "
+                "Anything about the current lecture I can help with?"
+            )
+        return None
+
+    def _is_redirect_persistence(
+        self,
+        raw_embedding: np.ndarray,
+        history: List[Dict[str, str]]
+    ) -> Optional[str]:
+        """Detect rephrased off-topic attempts after a redirect.
+
+        If the last assistant message had a redirect responseType AND the
+        current question is semantically similar to the last user question,
+        the user is likely rephrasing the same off-topic question.
+
+        Returns a redirect message if persistence detected, None otherwise.
+        """
+        if not history or len(history) < 2:
+            return None
+
+        # Find the last assistant and user messages
+        last_assistant = None
+        last_user_question = None
+        for msg in reversed(history):
+            if msg["role"] == "assistant" and last_assistant is None:
+                last_assistant = msg
+            elif msg["role"] == "user" and last_user_question is None:
+                last_user_question = msg
+            if last_assistant and last_user_question:
+                break
+
+        if not last_assistant or not last_user_question:
+            return None
+
+        # Check if last response was a redirect
+        last_response_type = last_assistant.get("responseType")
+        if last_response_type not in REDIRECT_RESPONSE_TYPES:
+            return None
+
+        # Compare embeddings (raw_embedding is already computed for current question)
+        try:
+            prev_embedding = self.embedding_service.encode(last_user_question["content"])
+            similarity = float(np.dot(raw_embedding, prev_embedding))
+
+            if similarity > REPHRASE_SIMILARITY_THRESHOLD:
+                logger.info(
+                    "Redirect persistence detected: similarity=%.3f > %.2f, "
+                    "previous responseType=%s",
+                    similarity, REPHRASE_SIMILARITY_THRESHOLD, last_response_type
+                )
+                return (
+                    "I hear you, but this one's still outside the current lecture scope. "
+                    "I want to make sure your tokens go toward the stuff that'll actually "
+                    "help you right now. What part of the current lecture can I help with?"
+                )
+        except Exception:
+            pass
+
+        return None
+
+    @staticmethod
+    def _count_consecutive_redirects(history: List[Dict[str, str]]) -> int:
+        """Count consecutive redirect responses at the end of conversation history.
+
+        Walks backward through assistant messages, counting how many consecutive
+        ones have a redirect responseType. Used to escalate redirect firmness.
+        """
+        count = 0
+        for msg in reversed(history):
+            if msg["role"] == "assistant":
+                if msg.get("responseType") in REDIRECT_RESPONSE_TYPES:
+                    count += 1
+                else:
+                    break  # Non-redirect assistant message breaks the streak
+        return count
+
+    @staticmethod
+    def _post_filter_safety(response_text: str) -> Optional[str]:
+        """Scan LLM response for dangerous SQL patterns, return safety disclaimer if found.
+
+        This is a LAST-RESORT guardrail. The system prompt should prevent most cases,
+        but this catches any that slip through. Skips if the LLM already included
+        safety language (avoid double-disclaimers).
+        """
+        if not _DANGEROUS_OUTPUT_PATTERNS.search(response_text):
+            return None
+
+        # Check if the response already contains safety language
+        disclaimer_keywords = ["backup", "staging", "never run", "production data", "safety note", "test environment"]
+        response_lower = response_text.lower()
+        if any(kw in response_lower for kw in disclaimer_keywords):
+            return None  # LLM already added a disclaimer
+
+        return _SAFETY_DISCLAIMER
 
     def _resolve_lecture_order(self, lecture_id: str, frontend_order: int) -> int:
         """Deterministically resolve the Qdrant-side lecture_order for a lecture_id.
