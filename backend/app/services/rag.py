@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 # Thresholds
 RELEVANCE_THRESHOLD = 0.35      # Below this = not relevant
 HIGH_RELEVANCE_THRESHOLD = 0.7  # Above this = use fewer chunks (save tokens)
+CURRENT_LECTURE_MIN_SCORE = 0.30  # Below this for current lecture = topic not covered here
 
 
 @dataclass
@@ -39,7 +40,7 @@ class RAGResponse:
     """Complete RAG pipeline response."""
     message: str
     references: List[Reference] = field(default_factory=list)
-    response_type: str = "in_scope"  # "in_scope", "future_topic", "off_topic"
+    response_type: str = "in_scope"  # "in_scope", "covered_elsewhere", "future_topic", "off_topic"
     cache_hit: bool = False
     tokens_used: Optional[int] = None
 
@@ -146,13 +147,27 @@ class RAGPipeline:
         # Step 4: Classify the response type (pass intent so "previous" queries aren't rejected)
         detected_intent = self._detect_intent(question)
         response_type, chunks_to_use = self._classify_results(
-            chunks, query_vector, course_title, intent=detected_intent
+            chunks, query_vector, course_title, intent=detected_intent,
+            current_lecture_id=lecture_id
         )
 
         if response_type == "off_topic":
             return RAGResponse(
                 message=self._off_topic_message(course_title),
                 response_type="off_topic"
+            )
+
+        if response_type == "covered_elsewhere":
+            elsewhere_info = ""
+            if chunks_to_use:
+                ec = chunks_to_use[0]
+                elsewhere_info = (
+                    f" in **{ec.metadata.get('lecture_title', '')}** "
+                    f"(Chapter: {ec.metadata.get('chapter_title', '')})"
+                )
+            return RAGResponse(
+                message=self._covered_elsewhere_message(course_title, elsewhere_info),
+                response_type="covered_elsewhere"
             )
 
         if response_type == "future_topic":
@@ -351,13 +366,27 @@ class RAGPipeline:
         # Classify (pass intent so "previous" queries aren't rejected)
         stream_intent = self._detect_intent(question)
         response_type, chunks_to_use = self._classify_results(
-            chunks, query_vector, course_title, intent=stream_intent
+            chunks, query_vector, course_title, intent=stream_intent,
+            current_lecture_id=lecture_id
         )
 
         if response_type == "off_topic":
             msg = self._off_topic_message(course_title)
             yield f"data: {json.dumps({'type': 'token', 'content': msg})}\n\n"
             yield f"data: {json.dumps({'type': 'done', 'references': [], 'responseType': 'off_topic'})}\n\n"
+            return
+
+        if response_type == "covered_elsewhere":
+            elsewhere_info = ""
+            if chunks_to_use:
+                ec = chunks_to_use[0]
+                elsewhere_info = (
+                    f" in **{ec.metadata.get('lecture_title', '')}** "
+                    f"(Chapter: {ec.metadata.get('chapter_title', '')})"
+                )
+            msg = self._covered_elsewhere_message(course_title, elsewhere_info)
+            yield f"data: {json.dumps({'type': 'token', 'content': msg})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'references': [], 'responseType': 'covered_elsewhere'})}\n\n"
             return
 
         if response_type == "future_topic":
@@ -465,9 +494,10 @@ class RAGPipeline:
         query_vector: list,
         course_title: str,
         correlation_id: str = "N/A",
-        intent: str = "default"
+        intent: str = "default",
+        current_lecture_id: str = ""
     ) -> tuple:
-        """Classify search results into in-scope, future-topic, or off-topic.
+        """Classify search results into in-scope, covered-elsewhere, future-topic, or off-topic.
 
         Returns (response_type, chunks_to_use)
         """
@@ -494,10 +524,35 @@ class RAGPipeline:
 
         # In-scope: decide how many chunks to use
         if chunks[0].score >= HIGH_RELEVANCE_THRESHOLD:
-            # Very relevant top result — use fewer chunks to save tokens
-            return "in_scope", chunks[:3]
+            chunks_to_use = chunks[:3]
         else:
-            return "in_scope", chunks[:5]
+            chunks_to_use = chunks[:5]
+
+        # Cross-lecture leak detection (guardrail):
+        # If the question matches OTHER lectures but NOT the current lecture,
+        # classify as "covered_elsewhere" instead of "in_scope".
+        # This prevents the bot from acting as a general tutor using
+        # cross-lecture content when the topic isn't in the current lecture.
+        if current_lecture_id and intent == "default":
+            current_chunks = [
+                c for c in chunks_to_use
+                if c.metadata.get('lecture_id') == current_lecture_id
+            ]
+            other_chunks = [
+                c for c in chunks_to_use
+                if c.metadata.get('lecture_id') != current_lecture_id
+            ]
+            best_current = max((c.score for c in current_chunks), default=0)
+
+            if best_current < CURRENT_LECTURE_MIN_SCORE and other_chunks:
+                logger.info(
+                    f"[{correlation_id}] Cross-lecture leak detected: "
+                    f"best_current={best_current:.3f} < {CURRENT_LECTURE_MIN_SCORE}, "
+                    f"other_chunks={len(other_chunks)} -> covered_elsewhere"
+                )
+                return "covered_elsewhere", other_chunks[:1]
+
+        return "in_scope", chunks_to_use
 
     def _build_context_string(
         self,
@@ -705,6 +760,14 @@ class RAGPipeline:
             f"{future_info}. "
             f"You'll get to it soon! For now, let's focus on what we're learning right now. "
             f"Anything about the current lecture I can help with?"
+        )
+
+    def _covered_elsewhere_message(self, course_title: str, elsewhere_info: str) -> str:
+        """Generate a friendly redirect when topic is covered in a different lecture."""
+        return (
+            f"That's actually covered{elsewhere_info}, not in the current lecture. "
+            f"Let's save your tokens for what we're learning right now! "
+            f"Any doubts on the current lecture I can help with?"
         )
 
     def _resolve_lecture_order(self, lecture_id: str, frontend_order: int) -> int:
