@@ -580,12 +580,12 @@ class RAGPipeline:
 
         Returns (response_type, chunks_to_use)
         """
-        # When intent is "previous" or "current" and we got chunks, trust the
-        # intent detection even if scores are low. Meta-questions like
-        # "what is this lecture about?" or "what was previous lecture?" have
-        # inherently low semantic similarity to actual transcript content,
-        # but the user's intent is unambiguous — never classify as off-topic.
-        if intent in ("previous", "current") and chunks:
+        # When intent is "previous", "current", or "specific_lecture" and we got
+        # chunks, trust the intent detection even if scores are low.
+        # Meta-questions like "what is this lecture about?" or "what was previous
+        # lecture?" have inherently low semantic similarity to actual transcript
+        # content, but the user's intent is unambiguous — never classify as off-topic.
+        if intent in ("previous", "current", "specific_lecture") and chunks:
             return "in_scope", chunks[:5]
 
         if not chunks or chunks[0].score < RELEVANCE_THRESHOLD:
@@ -1018,13 +1018,15 @@ class RAGPipeline:
 
     @staticmethod
     def _detect_intent(question: str) -> str:
-        """Detect whether the user is asking about current, previous, or general scope.
+        """Detect whether the user is asking about current, previous, a specific
+        other lecture, or general scope.
 
-        Returns: "current", "previous", or "default" (which maps to current-first).
+        Returns: "current", "previous", "specific_lecture", or "default".
 
-        Design principle: Default to current lecture. The vast majority of questions
-        a learner asks while watching a lecture are about THAT lecture. Only widen
-        scope when explicit "previous"/"last"/"earlier" markers are present.
+        - "specific_lecture": user references a lecture/chapter by number or ordinal
+          (e.g. "first lecture", "2nd lecture of 1st chapter", "lecture 3").
+          These should search across all accessible lectures, not just the current one.
+        - "default": current-lecture-first (the common case).
         """
         q = question.lower()
 
@@ -1059,6 +1061,24 @@ class RAGPipeline:
         ]
         if any(kw in q for kw in current_keywords):
             return "current"
+
+        # Check for SPECIFIC lecture/chapter reference by number or ordinal
+        # e.g. "first lecture", "2nd lecture of 1st chapter", "lecture 3",
+        #       "chapter 2", "in lecture 5", "pehle chapter mein"
+        specific_lecture_patterns = [
+            r'\b(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\s+(?:lecture|video|chapter)',
+            r'\b(?:lecture|video|chapter)\s+(?:number\s+)?\d+',
+            r'\b\d+(?:st|nd|rd|th)\s+(?:lecture|video|chapter)',
+            r'\b(?:in|from|of)\s+(?:lecture|chapter)\s+\d+',
+            r'\b\d+(?:st|nd|rd|th)\s+(?:lecture|video)\s+(?:of|in)\s+\d+(?:st|nd|rd|th)\s+chapter',
+            # Hindi/Hinglish
+            r'\bpehle?\s+(?:lecture|chapter|video)',
+            r'\bdusre?\s+(?:lecture|chapter|video)',
+            r'\btisre?\s+(?:lecture|chapter|video)',
+        ]
+        for pattern in specific_lecture_patterns:
+            if re.search(pattern, q):
+                return "specific_lecture"
 
         # DEFAULT: treat as current-lecture-first (not "search everything")
         return "default"
@@ -1113,6 +1133,26 @@ class RAGPipeline:
             # Fall through only if that lecture has NO chunks at all in Qdrant
             logger.warning(
                 f"[{correlation_id}] No chunks found for previous lecture (order {resolved_order - 1}), falling through"
+            )
+
+        # Step 2b: Handle SPECIFIC LECTURE reference (e.g. "first lecture", "lecture 3")
+        # User is asking about a specific lecture by number — search across all accessible lectures
+        if intent == "specific_lecture":
+            raw_vector = self.embedding_service.encode(question).tolist()
+            broad_chunks = self.vector_store.search(
+                query_vector=raw_vector,
+                course_title=course_title,
+                max_lecture_order=resolved_order,
+                top_k=5
+            )
+            if broad_chunks:
+                logger.info(
+                    f"[{correlation_id}] Search path: SPECIFIC_LECTURE (broad across all accessible) "
+                    f"| chunks={len(broad_chunks)} | best_score={broad_chunks[0].score:.3f}"
+                )
+                return broad_chunks
+            logger.warning(
+                f"[{correlation_id}] No chunks found for specific lecture reference, falling through"
             )
 
         # Step 3: Search current lecture (always needed)
