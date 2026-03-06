@@ -702,7 +702,7 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
               </h3>
               <p className="text-[11px] leading-tight mt-0.5">
                 {isTyping ? (
-                  <span className="text-[#10B981]">thinking...</span>
+                  <span className="text-[#10B981]">typing....</span>
                 ) : (
                   <span className="text-[#10B981]">Online</span>
                 )}
