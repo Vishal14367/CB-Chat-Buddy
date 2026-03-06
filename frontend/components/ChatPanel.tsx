@@ -702,7 +702,7 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
               </h3>
               <p className="text-[11px] leading-tight mt-0.5">
                 {isTyping ? (
-                  <span className="text-[#3B82F6]">typing...</span>
+                  <span className="text-[#10B981]">thinking...</span>
                 ) : (
                   <span className="text-[#10B981]">Online</span>
                 )}
@@ -799,11 +799,14 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
             <div className="flex-shrink-0 mr-2.5 mt-0.5">
               <Image src="/peter-avatar.png" alt="Peter" width={28} height={28} className="rounded-full opacity-60" />
             </div>
-            <div className="bg-white rounded-2xl rounded-bl-md px-4 py-3 border border-[#E2E5F1]">
-              <div className="flex items-center gap-1">
-                <div className="w-1.5 h-1.5 bg-[#3B82F6] rounded-full typing-dot"></div>
-                <div className="w-1.5 h-1.5 bg-[#3B82F6] rounded-full typing-dot"></div>
-                <div className="w-1.5 h-1.5 bg-[#3B82F6] rounded-full typing-dot"></div>
+            <div className="bg-white rounded-2xl rounded-bl-md px-4 py-2.5 border border-[#E2E5F1]">
+              <div className="flex items-center gap-1.5">
+                <span className="text-[12px] text-[#10B981] font-medium">Peter is thinking</span>
+                <div className="flex items-center gap-0.5">
+                  <div className="w-1 h-1 bg-[#10B981] rounded-full typing-dot"></div>
+                  <div className="w-1 h-1 bg-[#10B981] rounded-full typing-dot"></div>
+                  <div className="w-1 h-1 bg-[#10B981] rounded-full typing-dot"></div>
+                </div>
               </div>
             </div>
           </div>
