@@ -908,7 +908,7 @@ Transcript excerpts from this lecture:
             except Exception as e:
                 last_error = e
                 error_msg = str(e)
-                if "429" in error_msg and model != models[-1]:
+                if ("429" in error_msg or "413" in error_msg or "rate_limit" in error_msg.lower()) and model != models[-1]:
                     continue  # Try next fallback model
                 elif "401" in error_msg or "authentication" in error_msg.lower():
                     raise Exception("Invalid API key. Please update your key in Profile Settings.")
