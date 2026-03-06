@@ -111,7 +111,7 @@ export default function LecturePage() {
   const playerUrl = lecture.thumbnail_url || undefined;
 
   return (
-    <div className="min-h-screen bg-[#FAFAFA]">
+    <div className="bg-[#FAFAFA] h-[calc(100vh-57px)] overflow-hidden">
       {/* Desktop layout: side-by-side */}
       <div className="flex h-[calc(100vh-57px)]">
         {/* Left: Lecture content */}

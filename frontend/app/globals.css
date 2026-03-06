@@ -112,6 +112,19 @@ body {
 
 .voice-pulse { animation: voice-pulse 1.5s infinite; }
 
+/* Mode selector highlight animations */
+@keyframes mode-selector-enter {
+  0% { transform: scale(0.9) translateY(12px); opacity: 0; }
+  60% { transform: scale(1.02) translateY(-2px); opacity: 1; }
+  100% { transform: scale(1) translateY(0); opacity: 1; }
+}
+@keyframes mode-icon-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.3); }
+  50% { box-shadow: 0 0 0 8px rgba(59, 130, 246, 0); }
+}
+.animate-mode-selector { animation: mode-selector-enter 0.5s ease-out; }
+.mode-icon-pulse { animation: mode-icon-pulse 2s ease-in-out infinite; }
+
 .chat-prose p { margin-bottom: 0.5rem; }
 .chat-prose p:last-child { margin-bottom: 0; }
 .chat-prose ul { margin-top: 0.25rem; margin-bottom: 0.5rem; }

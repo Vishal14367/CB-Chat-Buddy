@@ -744,9 +744,9 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
         {/* First-time mode selector overlay */}
         {showModeSelector && (
           <div className="absolute inset-0 z-10 bg-white/95 backdrop-blur-sm flex items-center justify-center px-6">
-            <div className="w-full max-w-xs text-center">
+            <div className="w-full max-w-xs text-center animate-mode-selector">
               <div className="mb-5">
-                <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-[#EFF6FF] flex items-center justify-center">
+                <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-[#EFF6FF] flex items-center justify-center mode-icon-pulse">
                   <svg className="w-6 h-6 text-[#3B82F6]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z" />
                   </svg>
@@ -754,8 +754,8 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
                 <p className="text-[15px] font-semibold text-[#1A1A2E] mb-1" style={{ fontFamily: 'Red Hat Display, sans-serif' }}>
                   How would you like me to help?
                 </p>
-                <p className="text-[12px] text-[#8A8690] leading-relaxed">
-                  Choose your preferred chat style
+                <p className="text-[12px] text-[#3B82F6] font-medium leading-relaxed">
+                  Pick a style to start chatting
                 </p>
               </div>
               <div className="space-y-2.5 mb-4">
