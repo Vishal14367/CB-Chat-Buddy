@@ -43,6 +43,27 @@ _SQL_INJECTION_PATTERNS = re.compile(
     r"|(\bBENCHMARK\s*\()"
 )
 
+# Prompt injection / jailbreak keywords — always blocked pre-LLM
+_PROMPT_ATTACK_KEYWORDS = [
+    # Prompt injection
+    "system prompt", "ignore previous instructions", "ignore all previous",
+    "bypass guardrails", "override system", "forget your instructions",
+    "disregard your training",
+    # Jailbreak
+    "act as dan", "jailbreak", "do anything now", "unlimited mode",
+    "developer mode", "god mode", "disable safety", "you have no rules",
+    "act without restrictions",
+    # Prompt extraction
+    "reveal instructions", "show me your prompt", "print your instructions",
+    "repeat your system message", "reveal your configuration",
+    "what were you told", "tell me your rules", "expose your training",
+    "what is your prompt",
+    # Sneaky partial extraction
+    "first sentence of your instructions", "first word of your instructions",
+    "first line of your prompt", "beginning of your prompt",
+    "start of your instructions",
+]
+
 # Dangerous patterns in LLM output — triggers safety disclaimer
 _DANGEROUS_OUTPUT_PATTERNS = re.compile(
     r"(?i)"
@@ -122,8 +143,13 @@ class RAGPipeline:
             f"[{correlation_id}] RAG request: lecture_id={lecture_id} | course={course_title}"
         )
 
-        # Step 0: Pre-filter for SQL injection patterns
+        # Step 0a: Pre-filter for SQL injection patterns
         block_message = self._check_dangerous_query(question)
+        if block_message:
+            return RAGResponse(message=block_message, response_type="blocked")
+
+        # Step 0b: Pre-filter for prompt injection / jailbreak keywords
+        block_message = self._check_prompt_attack(question)
         if block_message:
             return RAGResponse(message=block_message, response_type="blocked")
 
@@ -898,6 +924,28 @@ class RAGPipeline:
                 "lectures in your course. "
                 "Anything about the current lecture I can help with?"
             )
+        return None
+
+    @staticmethod
+    def _check_prompt_attack(question: str) -> Optional[str]:
+        """Pre-filter for prompt injection and jailbreak keywords. Always blocks.
+
+        Returns a block message if the query contains attack keywords.
+        Returns None if the query is safe to proceed.
+
+        Design: Catches common prompt injection, jailbreak, and prompt
+        extraction attempts using exact phrase matching. Intentionally
+        excludes ambiguous phrases (e.g. "pretend you are", "no restrictions",
+        "prompt injection") that legitimate learners might use.
+        """
+        question_lower = question.lower()
+        for keyword in _PROMPT_ATTACK_KEYWORDS:
+            if keyword in question_lower:
+                return (
+                    "Hey, that's not something I can help with! "
+                    "I'm here to help you learn and ace your current lecture. "
+                    "Let's get back to it — got any questions about what we're covering?"
+                )
         return None
 
     def _is_redirect_persistence(
