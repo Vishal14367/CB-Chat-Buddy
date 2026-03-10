@@ -635,14 +635,23 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
         </div>
 
         {/* Onboarding form */}
-        <div className="flex-1 flex flex-col items-center justify-center px-6">
-          <div className="w-full max-w-xs text-center">
-            <div className="mb-4">
-              <p className="text-[14px] font-semibold text-[#1A1A2E] mb-1" style={{ fontFamily: 'Red Hat Display, sans-serif' }}>
-                Hey! I&apos;m Peter Pandey
+        <div className="flex-1 flex flex-col items-center justify-start pt-6 px-6 overflow-y-auto">
+          <div className="w-full max-w-sm">
+            <div className="mb-5">
+              <p className="text-[15px] font-semibold text-[#1A1A2E] mb-2 text-center" style={{ fontFamily: 'Red Hat Display, sans-serif' }}>
+                Hey! I&apos;m Peter Pandey 👋
               </p>
-              <p className="text-[12px] text-[#8A8690] leading-relaxed">
-                Before we start, I need your Groq API key. It&apos;s free and takes 30 seconds.
+              <p className="text-[12.5px] text-[#1A1A2E] font-medium mb-2 text-center">
+                Welcome to your Bootcamp-exclusive AI Chat Buddy!
+              </p>
+              <p className="text-[12px] text-[#8A8690] leading-relaxed mb-3 text-left">
+                Ask me anything — right inside your course player. No tab-switching, no Googling, no waiting.
+              </p>
+              <p className="text-[12px] text-[#8A8690] leading-relaxed mb-1 text-left">
+                <span className="font-semibold text-[#1A1A2E]">One-time setup (under a minute):</span> This runs on Groq&apos;s free AI. To keep it free for you, just connect your own Groq key.
+              </p>
+              <p className="text-[12px] text-[#8A8690] leading-relaxed text-left">
+                👉 Click &quot;Get free API key&quot; → Sign up → Copy &amp; paste your key → Hit Save.
               </p>
             </div>
 
@@ -679,6 +688,9 @@ export default function ChatPanel({ lectureId, courseTitle, currentLectureOrder,
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
                 </svg>
               </a>
+              <p className="text-[11.5px] text-[#8A8690] text-center mt-1">
+                That&apos;s it. I&apos;ll be here every time you learn. 🚀
+              </p>
             </div>
           </div>
         </div>
