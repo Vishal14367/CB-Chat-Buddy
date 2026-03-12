@@ -9,7 +9,8 @@ from app.models.schemas import (
     Course, CourseDetail, LectureDetail,
     ChatRequest, ChatResponse,
     VerifyKeyRequest, VerifyKeyResponse,
-    RAGChatRequest, RAGChatResponse, ReferenceItem
+    RAGChatRequest, RAGChatResponse, ReferenceItem,
+    WidgetChatRequest, WidgetChatResponse, WidgetChatResponseData
 )
 from app.utils.csv_parser import CSVDataSource
 from app.services.retrieval import LectureRetriever
@@ -347,3 +348,110 @@ async def get_cache_stats():
     if rag_pipeline is None or rag_pipeline.cache is None:
         return {"status": "not_available"}
     return rag_pipeline.cache.get_stats()
+
+
+# Regex for extracting lecture_id from widget pageUrl
+_WIDGET_PAGE_URL_PATTERN = re.compile(r'/bootcamp/\d+/lecture/(\d+)')
+
+
+@router.post("/v2/chat", response_model=WidgetChatResponse)
+async def chat_v2_widget(request: WidgetChatRequest):
+    """Non-streaming chat endpoint for widget integration.
+
+    Accepts the engineering team's JSON contract, resolves lecture metadata
+    from the pageUrl, and returns a single JSON response.
+    """
+    # 1. Parse pageUrl to extract lecture_id
+    match = _WIDGET_PAGE_URL_PATTERN.search(request.interactionContext.pageUrl)
+    if not match:
+        return WidgetChatResponse(
+            status="error",
+            error="Invalid pageUrl format. Expected: /bootcamp/{id}/lecture/{id}"
+        )
+    lecture_id = match.group(1)
+
+    # 2. Resolve lecture metadata
+    lecture_detail = None
+    if csv_data:
+        lecture_detail = csv_data.get_lecture_detail(lecture_id)
+    if not lecture_detail and rag_pipeline and rag_pipeline.vector_store:
+        lecture_detail = rag_pipeline.vector_store.get_lecture_detail(lecture_id)
+    if not lecture_detail:
+        return WidgetChatResponse(
+            status="error",
+            error=f"Lecture not found for id: {lecture_id}"
+        )
+
+    course_title = lecture_detail.get('course_title', '')
+    chapter_title = lecture_detail.get('chapter_title', '')
+    lecture_title = lecture_detail.get('lecture_title', '')
+    lecture_order = lecture_detail.get('lecture_order', 0)
+
+    # 3. Require API key from userContext
+    api_key = None
+    if request.userContext and request.userContext.llm_api_key:
+        api_key = request.userContext.llm_api_key.strip()
+    if not api_key:
+        return WidgetChatResponse(
+            status="error",
+            error="llm_api_key is required in userContext."
+        )
+
+    # 4. Ensure RAG pipeline is available
+    if rag_pipeline is None:
+        return WidgetChatResponse(
+            status="error",
+            error="RAG pipeline not initialized. Set APP_MODE=rag in .env"
+        )
+
+    # 5. Convert history
+    history = [
+        {"role": msg.role, "content": msg.content, "responseType": msg.responseType}
+        for msg in request.history
+    ]
+
+    # 6. Call RAG pipeline (non-streaming)
+    try:
+        rag_response = await rag_pipeline.process_question(
+            question=request.message,
+            course_title=course_title,
+            current_lecture_order=lecture_order,
+            lecture_id=lecture_id,
+            api_key=api_key,
+            history=history,
+            chapter_title=chapter_title,
+            lecture_title=lecture_title
+        )
+    except Exception as e:
+        logger.error(f"Widget chat error: {e}")
+        return WidgetChatResponse(
+            status="error",
+            error="Failed to generate response. Please try again."
+        )
+
+    # 7. Handle RAG pipeline errors (e.g., invalid API key, rate limit)
+    if rag_response.response_type in ("error", "rate_limited"):
+        return WidgetChatResponse(
+            status="error",
+            error=rag_response.message
+        )
+
+    # 8. Map RAGResponse to widget format
+    references = [
+        ReferenceItem(
+            lecture_title=ref.lecture_title,
+            chapter_title=ref.chapter_title,
+            timestamp=ref.timestamp,
+            url=ref.url
+        )
+        for ref in rag_response.references
+    ]
+
+    return WidgetChatResponse(
+        status="success",
+        data=WidgetChatResponseData(
+            reply=rag_response.message,
+            references=references,
+            responseType=rag_response.response_type
+        )
+    )

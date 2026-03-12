@@ -127,3 +127,50 @@ class RAGChatResponse(BaseModel):
     cacheHit: bool = False
     isNotAnswerable: bool = False
     discordUrl: Optional[str] = None
+
+
+# --- Widget Integration Models (v2 non-streaming) ---
+
+class WidgetUserContext(BaseModel):
+    userId: Optional[str] = None
+    role: Optional[str] = None
+    llm_api_key: Optional[str] = None
+    llm_provider: Optional[str] = "groq"
+
+class WidgetInteractionContext(BaseModel):
+    pageUrl: str
+    sessionId: Optional[str] = None
+
+class WidgetChatRequest(BaseModel):
+    message: str
+    widgetId: Optional[str] = None
+    userContext: Optional[WidgetUserContext] = None
+    interactionContext: WidgetInteractionContext
+    history: List[ChatMessage] = []
+
+    @field_validator('message')
+    @classmethod
+    def widget_message_valid(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError('message must not be empty')
+        if len(v) > 1000:
+            raise ValueError('message must be 1000 characters or less')
+        return v
+
+    @field_validator('history')
+    @classmethod
+    def widget_history_max(cls, v: List['ChatMessage']) -> List['ChatMessage']:
+        if len(v) > 50:
+            raise ValueError('history must contain 50 messages or fewer')
+        return v
+
+class WidgetChatResponseData(BaseModel):
+    reply: str
+    references: List[ReferenceItem] = []
+    responseType: str = "in_scope"
+    actionRequiresAuth: bool = False
+
+class WidgetChatResponse(BaseModel):
+    status: str  # "success" or "error"
+    data: Optional[WidgetChatResponseData] = None
+    error: Optional[str] = None
